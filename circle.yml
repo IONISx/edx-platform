@@ -22,6 +22,7 @@ dependencies:
     # from scratch again.
     - pip install -r requirements/edx/pre.txt
     - pip install -r requirements/edx/github.txt
+    - pip install -r requirements/ionisx.txt
     - pip install -r requirements/edx/local.txt
 
     # HACK: within base.txt stevedore had a
