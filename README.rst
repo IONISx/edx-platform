@@ -1,4 +1,16 @@
-This is the main edX platform which consists of LMS and Studio.
+edx-platform
+============
+
+.. image:: https://circleci.com/gh/IONISx/edx-platform.svg?style=svg
+    :target: https://circleci.com/gh/IONISx/edx-platform
+    :alt: Build Status
+
+.. image:: https://requires.io/github/IONISx/edx-platform/requirements.svg?branch=master
+     :target: https://requires.io/github/IONISx/edx-platform/requirements/?branch=master
+     :alt: Requirements Status
+
+
+    This is the main edX platform which consists of LMS and Studio.
 
 
 Installation
