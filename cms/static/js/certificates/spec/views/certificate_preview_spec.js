@@ -6,7 +6,7 @@ define([ // jshint ignore:line
     'js/models/course',
     'js/certificates/views/certificate_preview',
     'common/js/spec_helpers/template_helpers',
-    'js/spec_helpers/view_helpers',
+    'common/js/spec_helpers/view_helpers',
     'common/js/spec_helpers/ajax_helpers'
 ],
 function(_, $, Course, CertificatePreview, TemplateHelpers, ViewHelpers, AjaxHelpers) {
@@ -18,7 +18,7 @@ function(_, $, Course, CertificatePreview, TemplateHelpers, ViewHelpers, AjaxHel
         preview_certificate: '.preview-certificate-link'
     };
 
-     beforeEach(function() {
+    beforeEach(function() {
         window.course = new Course({
             id: '5',
             name: 'Course Name',
@@ -27,11 +27,13 @@ function(_, $, Course, CertificatePreview, TemplateHelpers, ViewHelpers, AjaxHel
             num: 'course_num',
             revision: 'course_rev'
         });
+        window.CMS.User = {isGlobalStaff: true};
     });
 
     afterEach(function() {
-         delete window.course;
-     });
+        delete window.course;
+        delete window.CMS.User;
+    });
 
     describe('Certificate Web Preview Spec:', function() {
 
@@ -47,7 +49,7 @@ function(_, $, Course, CertificatePreview, TemplateHelpers, ViewHelpers, AjaxHel
             appendSetFixtures('<div class="preview-certificate nav-actions"></div>');
             this.view = new CertificatePreview({
                 el: $('.preview-certificate'),
-                course_modes: ['test1', 'test2', 'test3'],
+                course_modes: ['test1', 'test2', 'test3', 'audit'],
                 certificate_web_view_url: '/users/1/courses/orgX/009/2016?preview=test1',
                 certificate_activation_handler_url: '/certificates/activation/'+ window.course.id,
                 is_active: true
@@ -56,6 +58,10 @@ function(_, $, Course, CertificatePreview, TemplateHelpers, ViewHelpers, AjaxHel
         });
 
         describe('Certificate preview', function() {
+
+            it('course mode "audit" should not be render in preview list', function () {
+                expect(this.view.course_modes.indexOf('audit') < 0).toBe(true);
+            });
 
             it('course mode event should call when user choose a new mode', function () {
                 spyOn(this.view, 'courseModeChanged');
@@ -83,6 +89,12 @@ function(_, $, Course, CertificatePreview, TemplateHelpers, ViewHelpers, AjaxHel
                 this.view.delegateEvents();
                 this.view.$(SELECTORS.activate_certificate).click();
                 expect(this.view.toggleCertificateActivation).toHaveBeenCalled();
+            });
+
+            it('toggle certificate activation button should not be present if user is not global staff', function () {
+                window.CMS.User = {isGlobalStaff: false};
+                appendSetFixtures(this.view.render().el);
+                expect(this.view.$(SELECTORS.activate_certificate)).not.toExist();
             });
 
             it('certificate deactivation works fine', function () {

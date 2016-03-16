@@ -241,25 +241,25 @@ class IsNewCourseTestCase(unittest.TestCase):
 
     def test_is_newish(self):
         descriptor = get_dummy_course(start='2012-12-02T12:00', is_new=True)
-        assert(descriptor.is_newish is True)
+        assert descriptor.is_newish is True
 
         descriptor = get_dummy_course(start='2013-02-02T12:00', is_new=False)
-        assert(descriptor.is_newish is False)
+        assert descriptor.is_newish is False
 
         descriptor = get_dummy_course(start='2013-02-02T12:00', is_new=True)
-        assert(descriptor.is_newish is True)
+        assert descriptor.is_newish is True
 
         descriptor = get_dummy_course(start='2013-01-15T12:00')
-        assert(descriptor.is_newish is True)
+        assert descriptor.is_newish is True
 
         descriptor = get_dummy_course(start='2013-03-01T12:00')
-        assert(descriptor.is_newish is True)
+        assert descriptor.is_newish is True
 
         descriptor = get_dummy_course(start='2012-10-15T12:00')
-        assert(descriptor.is_newish is False)
+        assert descriptor.is_newish is False
 
         descriptor = get_dummy_course(start='2012-12-31T12:00')
-        assert(descriptor.is_newish is True)
+        assert descriptor.is_newish is True
 
     def test_end_date_text(self):
         # No end date set, returns empty string.
@@ -352,6 +352,17 @@ class TeamsConfigurationTestCase(unittest.TestCase):
         self.add_team_configuration(max_team_size=4, topics=topics)
         self.assertTrue(self.course.teams_enabled)
         self.assertEqual(self.course.teams_topics, topics)
+
+
+class SelfPacedTestCase(unittest.TestCase):
+    """Tests for self-paced courses."""
+
+    def setUp(self):
+        super(SelfPacedTestCase, self).setUp()
+        self.course = get_dummy_course('2012-12-02T12:00')
+
+    def test_default(self):
+        self.assertFalse(self.course.self_paced)
 
 
 class CourseDescriptorTestCase(unittest.TestCase):

@@ -8,8 +8,9 @@ from django.conf import settings
 
 from opaque_keys.edx.locations import Location
 from xmodule.modulestore.exceptions import ItemNotFoundError
-from contentstore.utils import course_image_url
+from contentstore.utils import course_image_url, has_active_web_certificate
 from models.settings import course_grading
+from openedx.core.djangoapps.self_paced.models import SelfPacedConfiguration
 from xmodule.fields import Date
 from xmodule.modulestore.django import modulestore
 
@@ -52,7 +53,9 @@ class CourseDetails(object):
         self.entrance_exam_minimum_score_pct = settings.FEATURES.get(
             'ENTRANCE_EXAM_MIN_SCORE_PCT',
             '50'
-        )  # minimum passing score for entrance exam content module/tree
+        )  # minimum passing score for entrance exam content module/tree,
+        self.has_cert_config = None  # course has active certificate configuration
+        self.self_paced = None
 
     @classmethod
     def _fetch_about_attribute(cls, course_key, attribute):
@@ -84,6 +87,8 @@ class CourseDetails(object):
         course_details.language = descriptor.language
         # Default course license is "All Rights Reserved"
         course_details.license = getattr(descriptor, "license", "all-rights-reserved")
+        course_details.has_cert_config = has_active_web_certificate(descriptor)
+        course_details.self_paced = descriptor.self_paced
 
         for attribute in ABOUT_ATTRIBUTES:
             value = cls._fetch_about_attribute(course_key, attribute)
@@ -184,6 +189,13 @@ class CourseDetails(object):
 
         if 'language' in jsondict and jsondict['language'] != descriptor.language:
             descriptor.language = jsondict['language']
+            dirty = True
+
+        if (SelfPacedConfiguration.current().enabled
+                and descriptor.can_toggle_course_pacing
+                and 'self_paced' in jsondict
+                and jsondict['self_paced'] != descriptor.self_paced):
+            descriptor.self_paced = jsondict['self_paced']
             dirty = True
 
         if dirty:

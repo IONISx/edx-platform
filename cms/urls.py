@@ -32,7 +32,7 @@ urlpatterns = patterns(
         'contentstore.views.component_handler', name='component_handler'),
 
     url(r'^xblock/resource/(?P<block_type>[^/]*)/(?P<uri>.*)$',
-        'contentstore.views.xblock.xblock_resource', name='xblock_resource_url'),
+        'openedx.core.djangoapps.common_views.xblock.xblock_resource', name='xblock_resource_url'),
 
     # temporary landing page for a course
     url(r'^edge/(?P<org>[^/]+)/(?P<course>[^/]+)/course/(?P<coursename>[^/]+)$',
@@ -196,6 +196,12 @@ if settings.DEBUG:
         urlpatterns += dev_urlpatterns
     except ImportError:
         pass
+
+if 'debug_toolbar' in settings.INSTALLED_APPS:
+    import debug_toolbar
+    urlpatterns += (
+        url(r'^__debug__/', include(debug_toolbar.urls)),
+    )
 
 # Custom error pages
 # pylint: disable=invalid-name

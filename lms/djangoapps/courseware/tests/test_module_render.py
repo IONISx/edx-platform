@@ -47,8 +47,22 @@ from xmodule.lti_module import LTIDescriptor
 from xmodule.modulestore import ModuleStoreEnum
 from xmodule.modulestore.django import modulestore
 from xmodule.modulestore.tests.django_utils import ModuleStoreTestCase
-from xmodule.modulestore.tests.factories import ItemFactory, CourseFactory, check_mongo_calls
+from xmodule.modulestore.tests.factories import ItemFactory, CourseFactory, ToyCourseFactory, check_mongo_calls
 from xmodule.x_module import XModuleDescriptor, XModule, STUDENT_VIEW, CombinedSystem
+
+from openedx.core.djangoapps.credit.models import CreditCourse
+from openedx.core.djangoapps.credit.api import (
+    set_credit_requirements,
+    set_credit_requirement_status
+)
+
+from edx_proctoring.api import (
+    create_exam,
+    create_exam_attempt,
+    update_attempt_status
+)
+from edx_proctoring.runtime import set_runtime_service
+from edx_proctoring.tests.test_services import MockCreditService
 
 TEST_DATA_DIR = settings.COMMON_TEST_DATA_ROOT
 
@@ -113,7 +127,7 @@ class ModuleRenderTestCase(ModuleStoreTestCase, LoginEnrollmentTestCase):
         """
         super(ModuleRenderTestCase, self).setUp()
 
-        self.course_key = self.create_toy_course()
+        self.course_key = ToyCourseFactory.create().id
         self.toy_course = modulestore().get_course(self.course_key)
         self.mock_user = UserFactory()
         self.mock_user.id = 1
@@ -389,7 +403,7 @@ class TestHandleXBlockCallback(ModuleStoreTestCase, LoginEnrollmentTestCase):
     def setUp(self):
         super(TestHandleXBlockCallback, self).setUp()
 
-        self.course_key = self.create_toy_course()
+        self.course_key = ToyCourseFactory.create().id
         self.location = self.course_key.make_usage_key('chapter', 'Overview')
         self.toy_course = modulestore().get_course(self.course_key)
         self.mock_user = UserFactory.create()
@@ -588,8 +602,11 @@ class TestHandleXBlockCallback(ModuleStoreTestCase, LoginEnrollmentTestCase):
 @ddt.ddt
 class TestTOC(ModuleStoreTestCase):
     """Check the Table of Contents for a course"""
-    def setup_modulestore(self, default_ms, num_finds, num_sends):
-        self.course_key = self.create_toy_course()
+    def setup_request_and_course(self, num_finds, num_sends):
+        """
+        Sets up the toy course in the modulestore and the request object.
+        """
+        self.course_key = ToyCourseFactory.create().id  # pylint: disable=attribute-defined-outside-init
         self.chapter = 'Overview'
         chapter_url = '%s/%s/%s' % ('/courses', self.course_key, self.chapter)
         factory = RequestFactory()
@@ -598,9 +615,9 @@ class TestTOC(ModuleStoreTestCase):
         self.modulestore = self.store._get_modulestore_for_courselike(self.course_key)  # pylint: disable=protected-access, attribute-defined-outside-init
         with self.modulestore.bulk_operations(self.course_key):
             with check_mongo_calls(num_finds, num_sends):
-                self.toy_course = self.store.get_course(self.toy_loc, depth=2)
+                self.toy_course = self.store.get_course(self.course_key, depth=2)  # pylint: disable=attribute-defined-outside-init
                 self.field_data_cache = FieldDataCache.cache_for_descriptor_descendents(
-                    self.toy_loc, self.request.user, self.toy_course, depth=2
+                    self.course_key, self.request.user, self.toy_course, depth=2
                 )
 
     # Mongo makes 3 queries to load the course to depth 2:
@@ -618,7 +635,8 @@ class TestTOC(ModuleStoreTestCase):
     @ddt.unpack
     def test_toc_toy_from_chapter(self, default_ms, setup_finds, setup_sends, toc_finds):
         with self.store.default_store(default_ms):
-            self.setup_modulestore(default_ms, setup_finds, setup_sends)
+            self.setup_request_and_course(setup_finds, setup_sends)
+
             expected = ([{'active': True, 'sections':
                           [{'url_name': 'Toy_Videos', 'display_name': u'Toy Videos', 'graded': True,
                             'format': u'Lecture Sequence', 'due': None, 'active': False},
@@ -628,16 +646,16 @@ class TestTOC(ModuleStoreTestCase):
                             'format': '', 'due': None, 'active': False},
                            {'url_name': 'video_4f66f493ac8f', 'display_name': 'Video', 'graded': True,
                             'format': '', 'due': None, 'active': False}],
-                          'url_name': 'Overview', 'display_name': u'Overview'},
+                          'url_name': 'Overview', 'display_name': u'Overview', 'display_id': u'overview'},
                          {'active': False, 'sections':
                           [{'url_name': 'toyvideo', 'display_name': 'toyvideo', 'graded': True,
                             'format': '', 'due': None, 'active': False}],
-                          'url_name': 'secret:magic', 'display_name': 'secret:magic'}])
+                          'url_name': 'secret:magic', 'display_name': 'secret:magic', 'display_id': 'secretmagic'}])
 
             course = self.store.get_course(self.toy_course.id, depth=2)
             with check_mongo_calls(toc_finds):
                 actual = render.toc_for_course(
-                    self.request, course, self.chapter, None, self.field_data_cache
+                    self.request.user, self.request, course, self.chapter, None, self.field_data_cache
                 )
         for toc_section in expected:
             self.assertIn(toc_section, actual)
@@ -657,7 +675,7 @@ class TestTOC(ModuleStoreTestCase):
     @ddt.unpack
     def test_toc_toy_from_section(self, default_ms, setup_finds, setup_sends, toc_finds):
         with self.store.default_store(default_ms):
-            self.setup_modulestore(default_ms, setup_finds, setup_sends)
+            self.setup_request_and_course(setup_finds, setup_sends)
             section = 'Welcome'
             expected = ([{'active': True, 'sections':
                           [{'url_name': 'Toy_Videos', 'display_name': u'Toy Videos', 'graded': True,
@@ -668,18 +686,339 @@ class TestTOC(ModuleStoreTestCase):
                             'format': '', 'due': None, 'active': False},
                            {'url_name': 'video_4f66f493ac8f', 'display_name': 'Video', 'graded': True,
                             'format': '', 'due': None, 'active': False}],
-                          'url_name': 'Overview', 'display_name': u'Overview'},
+                          'url_name': 'Overview', 'display_name': u'Overview', 'display_id': u'overview'},
                          {'active': False, 'sections':
                           [{'url_name': 'toyvideo', 'display_name': 'toyvideo', 'graded': True,
                             'format': '', 'due': None, 'active': False}],
-                          'url_name': 'secret:magic', 'display_name': 'secret:magic'}])
+                          'url_name': 'secret:magic', 'display_name': 'secret:magic', 'display_id': 'secretmagic'}])
 
             with check_mongo_calls(toc_finds):
                 actual = render.toc_for_course(
-                    self.request, self.toy_course, self.chapter, section, self.field_data_cache
+                    self.request.user, self.request, self.toy_course, self.chapter, section, self.field_data_cache
                 )
             for toc_section in expected:
                 self.assertIn(toc_section, actual)
+
+
+@attr('shard_1')
+@ddt.ddt
+@patch.dict('django.conf.settings.FEATURES', {'ENABLE_SPECIAL_EXAMS': True})
+class TestProctoringRendering(ModuleStoreTestCase):
+    """Check the Table of Contents for a course"""
+    def setUp(self):
+        """
+        Set up the initial mongo datastores
+        """
+        super(TestProctoringRendering, self).setUp()
+        self.course_key = ToyCourseFactory.create().id
+        self.chapter = 'Overview'
+        chapter_url = '%s/%s/%s' % ('/courses', self.course_key, self.chapter)
+        factory = RequestFactory()
+        self.request = factory.get(chapter_url)
+        self.request.user = UserFactory()
+        self.modulestore = self.store._get_modulestore_for_courselike(self.course_key)  # pylint: disable=protected-access, attribute-defined-outside-init
+        with self.modulestore.bulk_operations(self.course_key):
+            self.toy_course = self.store.get_course(self.course_key, depth=2)
+            self.field_data_cache = FieldDataCache.cache_for_descriptor_descendents(
+                self.course_key, self.request.user, self.toy_course, depth=2
+            )
+
+    @ddt.data(
+        ('honor', False, None, None),
+        (
+            'honor',
+            True,
+            'eligible',
+            {
+                'status': 'eligible',
+                'short_description': 'Ungraded Practice Exam',
+                'suggested_icon': '',
+                'in_completed_state': False
+            }
+        ),
+        (
+            'honor',
+            True,
+            'submitted',
+            {
+                'status': 'submitted',
+                'short_description': 'Practice Exam Completed',
+                'suggested_icon': 'fa-check',
+                'in_completed_state': True
+            }
+        ),
+        (
+            'honor',
+            True,
+            'error',
+            {
+                'status': 'error',
+                'short_description': 'Practice Exam Failed',
+                'suggested_icon': 'fa-exclamation-triangle',
+                'in_completed_state': True
+            }
+        ),
+        (
+            'verified',
+            False,
+            None,
+            {
+                'status': 'eligible',
+                'short_description': 'Proctored Option Available',
+                'suggested_icon': 'fa-pencil-square-o',
+                'in_completed_state': False
+            }
+        ),
+        (
+            'verified',
+            False,
+            'declined',
+            {
+                'status': 'declined',
+                'short_description': 'Taking As Open Exam',
+                'suggested_icon': 'fa-pencil-square-o',
+                'in_completed_state': False
+            }
+        ),
+        (
+            'verified',
+            False,
+            'submitted',
+            {
+                'status': 'submitted',
+                'short_description': 'Pending Session Review',
+                'suggested_icon': 'fa-spinner fa-spin',
+                'in_completed_state': True
+            }
+        ),
+        (
+            'verified',
+            False,
+            'verified',
+            {
+                'status': 'verified',
+                'short_description': 'Passed Proctoring',
+                'suggested_icon': 'fa-check',
+                'in_completed_state': True
+            }
+        ),
+        (
+            'verified',
+            False,
+            'rejected',
+            {
+                'status': 'rejected',
+                'short_description': 'Failed Proctoring',
+                'suggested_icon': 'fa-exclamation-triangle',
+                'in_completed_state': True
+            }
+        ),
+        (
+            'verified',
+            False,
+            'error',
+            {
+                'status': 'error',
+                'short_description': 'Failed Proctoring',
+                'suggested_icon': 'fa-exclamation-triangle',
+                'in_completed_state': True
+            }
+        ),
+    )
+    @ddt.unpack
+    def test_proctored_exam_toc(self, enrollment_mode, is_practice_exam,
+                                attempt_status, expected):
+        """
+        Generate TOC for a course with a single chapter/sequence which contains proctored exam
+        """
+        self._setup_test_data(enrollment_mode, is_practice_exam, attempt_status)
+
+        actual = render.toc_for_course(
+            self.request.user,
+            self.request,
+            self.toy_course,
+            self.chapter,
+            'Toy_Videos',
+            self.field_data_cache
+        )
+        section_actual = self._find_section(actual, 'Overview', 'Toy_Videos')
+
+        if expected:
+            self.assertIn(expected, [section_actual['proctoring']])
+        else:
+            # we expect there not to be a 'proctoring' key in the dict
+            self.assertNotIn('proctoring', section_actual)
+
+    @ddt.data(
+        (
+            'honor',
+            True,
+            None,
+            'Try a proctored exam',
+            True
+        ),
+        (
+            'honor',
+            True,
+            'submitted',
+            'You have submitted this practice proctored exam',
+            False
+        ),
+        (
+            'honor',
+            True,
+            'error',
+            'There was a problem with your practice proctoring session',
+            True
+        ),
+        (
+            'verified',
+            False,
+            None,
+            'This exam is proctored',
+            False
+        ),
+        (
+            'verified',
+            False,
+            'submitted',
+            'You have submitted this proctored exam for review',
+            True
+        ),
+        (
+            'verified',
+            False,
+            'verified',
+            'Your proctoring session was reviewed and passed all requirements',
+            False
+        ),
+        (
+            'verified',
+            False,
+            'rejected',
+            'Your proctoring session was reviewed and did not pass requirements',
+            True
+        ),
+        (
+            'verified',
+            False,
+            'error',
+            'There was a problem with your proctoring session',
+            False
+        ),
+    )
+    @ddt.unpack
+    def test_render_proctored_exam(self, enrollment_mode, is_practice_exam,
+                                   attempt_status, expected, with_credit_context):
+        """
+        Verifies gated content from the student view rendering of a sequence
+        this is labeled as a proctored exam
+        """
+
+        usage_key = self._setup_test_data(enrollment_mode, is_practice_exam, attempt_status)
+
+        # initialize some credit requirements, if so then specify
+        if with_credit_context:
+            credit_course = CreditCourse(course_key=self.course_key, enabled=True)
+            credit_course.save()
+            set_credit_requirements(
+                self.course_key,
+                [
+                    {
+                        'namespace': 'reverification',
+                        'name': 'reverification-1',
+                        'display_name': 'ICRV1',
+                        'criteria': {},
+                    },
+                    {
+                        'namespace': 'proctored-exam',
+                        'name': 'Exam1',
+                        'display_name': 'A Proctored Exam',
+                        'criteria': {}
+                    }
+                ]
+            )
+
+            set_credit_requirement_status(
+                self.request.user.username,
+                self.course_key,
+                'reverification',
+                'ICRV1'
+            )
+
+        module = render.get_module(
+            self.request.user,
+            self.request,
+            usage_key,
+            self.field_data_cache,
+            wrap_xmodule_display=True,
+        )
+        content = module.render(STUDENT_VIEW).content
+
+        self.assertIn(expected, content)
+
+    def _setup_test_data(self, enrollment_mode, is_practice_exam, attempt_status):
+        """
+        Helper method to consolidate some courseware/proctoring/credit
+        test harness data
+        """
+        usage_key = self.course_key.make_usage_key('videosequence', 'Toy_Videos')
+        sequence = self.modulestore.get_item(usage_key)
+
+        sequence.is_time_limited = True
+        sequence.is_proctored_exam = True
+        sequence.is_practice_exam = is_practice_exam
+
+        self.modulestore.update_item(sequence, self.user.id)
+
+        self.toy_course = self.modulestore.get_course(self.course_key)
+
+        # refresh cache after update
+        self.field_data_cache = FieldDataCache.cache_for_descriptor_descendents(
+            self.course_key, self.request.user, self.toy_course, depth=2
+        )
+
+        set_runtime_service(
+            'credit',
+            MockCreditService(enrollment_mode=enrollment_mode)
+        )
+
+        exam_id = create_exam(
+            course_id=unicode(self.course_key),
+            content_id=unicode(sequence.location),
+            exam_name='foo',
+            time_limit_mins=10,
+            is_proctored=True,
+            is_practice_exam=is_practice_exam
+        )
+
+        if attempt_status:
+            create_exam_attempt(exam_id, self.request.user.id, taking_as_proctored=True)
+            update_attempt_status(exam_id, self.request.user.id, attempt_status)
+
+        return usage_key
+
+    def _find_url_name(self, toc, url_name):
+        """
+        Helper to return the dict TOC section associated with a Chapter of url_name
+        """
+
+        for entry in toc:
+            if entry['url_name'] == url_name:
+                return entry
+
+        return None
+
+    def _find_section(self, toc, chapter_url_name, section_url_name):
+        """
+        Helper to return the dict TOC section associated with a section of url_name
+        """
+
+        chapter = self._find_url_name(toc, chapter_url_name)
+        if chapter:
+            return self._find_url_name(chapter['sections'], section_url_name)
+
+        return None
 
 
 @attr('shard_1')
@@ -794,16 +1133,19 @@ class TestHtmlModifiers(ModuleStoreTestCase):
         self.assertTrue(url.startswith('/static/toy_course_dir/'))
         self.course.static_asset_path = ""
 
+    @override_settings(DEFAULT_COURSE_ABOUT_IMAGE_URL='test.png')
+    @override_settings(STATIC_URL='static/')
     @ddt.data(ModuleStoreEnum.Type.mongo, ModuleStoreEnum.Type.split)
     def test_course_image_for_split_course(self, store):
         """
-        for split courses if course_image is empty then course_image_url will be blank
+        for split courses if course_image is empty then course_image_url will be
+        the default image url defined in settings
         """
         self.course = CourseFactory.create(default_store=store)
         self.course.course_image = ''
 
         url = course_image_url(self.course)
-        self.assertEqual('', url)
+        self.assertEqual('static/test.png', url)
 
     def test_get_course_info_section(self):
         self.course.static_asset_path = "toy_course_dir"
@@ -1136,7 +1478,7 @@ class TestAnonymousStudentId(ModuleStoreTestCase, LoginEnrollmentTestCase):
     def setUp(self):
         super(TestAnonymousStudentId, self).setUp(create_user=False)
         self.user = UserFactory()
-        self.course_key = self.create_toy_course()
+        self.course_key = ToyCourseFactory.create().id
         self.course = modulestore().get_course(self.course_key)
 
     @patch('courseware.module_render.has_access', Mock(return_value=True))
@@ -1170,7 +1512,7 @@ class TestAnonymousStudentId(ModuleStoreTestCase, LoginEnrollmentTestCase):
         return render.get_module_for_descriptor_internal(
             user=self.user,
             descriptor=descriptor,
-            field_data_cache=Mock(spec=FieldDataCache, name='field_data_cache'),
+            student_data=Mock(spec=FieldData, name='student_data'),
             course_id=course_id,
             track_function=Mock(name='track_function'),  # Track Function
             xqueue_callback_url_prefix=Mock(name='xqueue_callback_url_prefix'),  # XQueue Callback Url Prefix
@@ -1357,22 +1699,43 @@ class TestRebindModule(TestSubmittingProblems):
         super(TestRebindModule, self).setUp()
         self.homework = self.add_graded_section_to_course('homework')
         self.lti = ItemFactory.create(category='lti', parent=self.homework)
+        self.problem = ItemFactory.create(category='problem', parent=self.homework)
         self.user = UserFactory.create()
         self.anon_user = AnonymousUser()
 
-    def get_module_for_user(self, user):
+    def get_module_for_user(self, user, item=None):
         """Helper function to get useful module at self.location in self.course_id for user"""
         mock_request = MagicMock()
         mock_request.user = user
         field_data_cache = FieldDataCache.cache_for_descriptor_descendents(
             self.course.id, user, self.course, depth=2)
 
+        if item is None:
+            item = self.lti
+
         return render.get_module(  # pylint: disable=protected-access
             user,
             mock_request,
-            self.lti.location,
+            item.location,
             field_data_cache,
         )._xmodule
+
+    def test_rebind_module_to_new_users(self):
+        module = self.get_module_for_user(self.user, self.problem)
+
+        # Bind the module to another student, which will remove "correct_map"
+        # from the module's _field_data_cache and _dirty_fields.
+        user2 = UserFactory.create()
+        module.descriptor.bind_for_student(module.system, user2.id)
+
+        # XBlock's save method assumes that if a field is in _dirty_fields,
+        # then it's also in _field_data_cache. If this assumption
+        # doesn't hold, then we get an error trying to bind this module
+        # to a third student, since we've removed "correct_map" from
+        # _field_data cache, but not _dirty_fields, when we bound
+        # this module to the second student. (TNL-2640)
+        user3 = UserFactory.create()
+        module.descriptor.bind_for_student(module.system, user3.id)
 
     def test_rebind_noauth_module_to_user_not_anonymous(self):
         """
@@ -1465,7 +1828,7 @@ class LMSXBlockServiceBindingTest(ModuleStoreTestCase):
         """
         super(LMSXBlockServiceBindingTest, self).setUp()
         self.user = UserFactory()
-        self.field_data_cache = Mock()
+        self.student_data = Mock()
         self.course = CourseFactory.create()
         self.track_function = Mock()
         self.xqueue_callback_url_prefix = Mock()
@@ -1480,7 +1843,7 @@ class LMSXBlockServiceBindingTest(ModuleStoreTestCase):
         descriptor = ItemFactory(category="pure", parent=self.course)
         runtime, _ = render.get_module_system_for_user(
             self.user,
-            self.field_data_cache,
+            self.student_data,
             descriptor,
             self.course.id,
             self.track_function,
@@ -1499,7 +1862,7 @@ class LMSXBlockServiceBindingTest(ModuleStoreTestCase):
         descriptor.days_early_for_beta = 5
         runtime, _ = render.get_module_system_for_user(
             self.user,
-            self.field_data_cache,
+            self.student_data,
             descriptor,
             self.course.id,
             self.track_function,

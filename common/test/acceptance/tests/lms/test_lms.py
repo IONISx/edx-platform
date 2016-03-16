@@ -3,13 +3,13 @@
 End-to-end tests for the LMS.
 """
 
+from datetime import datetime
 from flaky import flaky
 from textwrap import dedent
 from unittest import skip
 from nose.plugins.attrib import attr
 
 from bok_choy.promise import EmptyPromise
-from bok_choy.web_app_test import WebAppTest
 from ..helpers import (
     UniqueCourseTest,
     EventsTestMixin,
@@ -18,6 +18,7 @@ from ..helpers import (
     select_option_by_value,
     element_has_text
 )
+from ...pages.lms import BASE_URL
 from ...pages.lms.account_settings import AccountSettingsPage
 from ...pages.lms.auto_auth import AutoAuthPage
 from ...pages.lms.create_mode import ModeCreationPage
@@ -108,7 +109,7 @@ class LoginFromCombinedPageTest(UniqueCourseTest):
         self.login_page.visit().toggle_form()
         self.assertEqual(self.login_page.current_form, "register")
 
-    @flaky  # TODO fix this, see ECOM-1165
+    @flaky  # ECOM-1165
     def test_password_reset_success(self):
         # Create a user account
         email, password = self._create_unique_user()  # pylint: disable=unused-variable
@@ -267,12 +268,6 @@ class RegisterFromCombinedPageTest(UniqueCourseTest):
         # Expect that we reach the dashboard and we're auto-enrolled in the course
         course_names = self.dashboard_page.wait_for_page().available_courses
         self.assertIn(self.course_info["display_name"], course_names)
-
-        self.assertEqual("want to change your account settings?", self.dashboard_page.sidebar_menu_title.lower())
-        self.assertEqual(
-            "click the arrow next to your username above.",
-            self.dashboard_page.sidebar_menu_description.lower()
-        )
 
     def test_register_failure(self):
         # Navigate to the registration page
@@ -485,7 +480,7 @@ class PayAndVerifyTest(EventsTestMixin, UniqueCourseTest):
         self.assertEqual(enrollment_mode, 'verified')
 
 
-@attr('shard_5')
+@attr('shard_1')
 class CourseWikiTest(UniqueCourseTest):
     """
     Tests that verify the course wiki.
@@ -539,7 +534,7 @@ class CourseWikiTest(UniqueCourseTest):
         self.assertEqual(content, actual_content)
 
 
-@attr('shard_5')
+@attr('shard_1')
 class HighLevelTabTest(UniqueCourseTest):
     """
     Tests that verify each of the high-level tabs available within a course.
@@ -725,7 +720,7 @@ class PDFTextBooksTabTest(UniqueCourseTest):
             self.tab_nav.go_to_tab("PDF Book {}".format(i))
 
 
-@attr('shard_5')
+@attr('shard_1')
 class VideoTest(UniqueCourseTest):
     """
     Navigate to a video in the courseware and play it.
@@ -796,7 +791,7 @@ class VideoTest(UniqueCourseTest):
         self.assertGreaterEqual(self.video.duration, self.video.elapsed_time)
 
 
-@attr('shard_5')
+@attr('shard_1')
 class VisibleToStaffOnlyTest(UniqueCourseTest):
     """
     Tests that content with visible_to_staff_only set to True cannot be viewed by students.
@@ -881,7 +876,7 @@ class VisibleToStaffOnlyTest(UniqueCourseTest):
         self.assertEqual(["Html Child in visible unit"], self.course_nav.sequence_items)
 
 
-@attr('shard_5')
+@attr('shard_1')
 class TooltipTest(UniqueCourseTest):
     """
     Tests that tooltips are displayed
@@ -926,7 +921,7 @@ class TooltipTest(UniqueCourseTest):
         self.assertTrue(self.courseware_page.tooltips_displayed())
 
 
-@attr('shard_5')
+@attr('shard_1')
 class PreRequisiteCourseTest(UniqueCourseTest):
     """
     Tests that pre-requisite course messages are displayed
@@ -1011,7 +1006,7 @@ class PreRequisiteCourseTest(UniqueCourseTest):
         self.settings_page.save_changes()
 
 
-@attr('shard_5')
+@attr('shard_1')
 class ProblemExecutionTest(UniqueCourseTest):
     """
     Tests of problems.
@@ -1090,7 +1085,7 @@ class ProblemExecutionTest(UniqueCourseTest):
         self.assertFalse(problem_page.is_correct())
 
 
-@attr('shard_5')
+@attr('shard_1')
 class EntranceExamTest(UniqueCourseTest):
     """
     Tests that course has an entrance exam.
@@ -1126,7 +1121,7 @@ class EntranceExamTest(UniqueCourseTest):
             When I view the courseware that has an entrance exam
             Then there should be an "Entrance Exam" chapter.'
         """
-        entrance_exam_link_selector = 'div#accordion nav div h3 a'
+        entrance_exam_link_selector = '.accordion .course-navigation .chapter .group-heading'
         # visit courseware page and make sure there is not entrance exam chapter.
         self.courseware_page.visit()
         self.courseware_page.wait_for_page()
@@ -1159,3 +1154,35 @@ class EntranceExamTest(UniqueCourseTest):
             css_selector=entrance_exam_link_selector,
             text='Entrance Exam'
         ))
+
+
+@attr('shard_1')
+class NotLiveRedirectTest(UniqueCourseTest):
+    """
+    Test that a banner is shown when the user is redirected to
+    the dashboard from a non-live course.
+    """
+
+    def setUp(self):
+        """Create a course that isn't live yet and enroll for it."""
+        super(NotLiveRedirectTest, self).setUp()
+        CourseFixture(
+            self.course_info['org'], self.course_info['number'],
+            self.course_info['run'], self.course_info['display_name'],
+            start_date=datetime(year=2099, month=1, day=1)
+        ).install()
+        AutoAuthPage(self.browser, course_id=self.course_id).visit()
+
+    def test_redirect_banner(self):
+        """
+        Navigate to the course info page, then check that we're on the
+        dashboard page with the appropriate message.
+        """
+        url = BASE_URL + "/courses/" + self.course_id + "/" + 'info'
+        self.browser.get(url)
+        page = DashboardPage(self.browser)
+        page.wait_for_page()
+        self.assertIn(
+            'The course you are looking for does not start until',
+            page.banner_text
+        )

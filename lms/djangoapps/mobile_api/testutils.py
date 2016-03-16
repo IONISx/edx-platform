@@ -12,6 +12,7 @@ Test utilities for mobile API tests:
 # pylint: disable=no-member
 import ddt
 from mock import patch
+from unittest import skip
 
 from django.core.urlresolvers import reverse
 
@@ -19,6 +20,11 @@ from rest_framework.test import APITestCase
 
 from opaque_keys.edx.keys import CourseKey
 
+from courseware.access_response import (
+    MobileAvailabilityError,
+    StartDateError,
+    VisibilityError
+)
 from courseware.tests.factories import UserFactory
 from student import auth
 from student.models import CourseEnrollment
@@ -159,15 +165,11 @@ class MobileCourseAccessTestMixin(MobileAPIMilestonesMixin):
         response = self.api_response(expected_response_code=None, course_id=non_existent_course_id)
         self.verify_failure(response)  # allow subclasses to override verification
 
+    @skip  # TODO fix this, see MA-1038
     @patch.dict('django.conf.settings.FEATURES', {'DISABLE_START_DATES': False})
     def test_unreleased_course(self):
         self.init_course_access()
-
-        response = self.api_response(expected_response_code=None)
-        if self.ALLOW_ACCESS_TO_UNRELEASED_COURSE:
-            self.verify_success(response)
-        else:
-            self.verify_failure(response)
+        self._verify_response(self.ALLOW_ACCESS_TO_UNRELEASED_COURSE, StartDateError(self.course.start))
 
     # A tuple of Role Types and Boolean values that indicate whether access should be given to that role.
     @ddt.data(
@@ -179,24 +181,40 @@ class MobileCourseAccessTestMixin(MobileAPIMilestonesMixin):
     @ddt.unpack
     def test_non_mobile_available(self, role, should_succeed):
         self.init_course_access()
-
         # set mobile_available to False for the test course
         self.course.mobile_available = False
         self.store.update_item(self.course, self.user.id)
-
-        # set user's role in the course
-        if role:
-            role(self.course.id).add_users(self.user)
-
-        # call API and verify response
-        response = self.api_response(expected_response_code=None)
-        if should_succeed:
-            self.verify_success(response)
-        else:
-            self.verify_failure(response)
+        self._verify_response(should_succeed, MobileAvailabilityError(), role)
 
     def test_unenrolled_user(self):
         self.login()
         self.unenroll()
         response = self.api_response(expected_response_code=None)
         self.verify_failure(response)
+
+    @ddt.data(
+        (auth.CourseStaffRole, True),
+        (None, False)
+    )
+    @ddt.unpack
+    def test_visible_to_staff_only_course(self, role, should_succeed):
+        self.init_course_access()
+        self.course.visible_to_staff_only = True
+        self.store.update_item(self.course, self.user.id)
+        self._verify_response(should_succeed, VisibilityError(), role)
+
+    def _verify_response(self, should_succeed, error_type, role=None):
+        """
+        Calls API and verifies the response
+        """
+        # set user's role in the course
+        if role:
+            role(self.course.id).add_users(self.user)
+
+        response = self.api_response(expected_response_code=None)
+
+        if should_succeed:
+            self.verify_success(response)
+        else:
+            self.verify_failure(response)
+            self.assertEqual(response.data, error_type.to_json())

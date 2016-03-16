@@ -13,6 +13,8 @@ from lms.envs.dev import (WIKI_ENABLED)
 
 DEBUG = True
 TEMPLATE_DEBUG = DEBUG
+HTTPS = 'off'
+
 LOGGING = get_logger_config(ENV_ROOT / "log",
                             logging_env="dev",
                             tracking_filename="tracking.log",
@@ -162,12 +164,10 @@ FEATURES['ENABLE_SERVICE_STATUS'] = True
 
 ############################# SEGMENT-IO ##################################
 
-# If there's an environment variable set, grab it and turn on Segment.io
+# If there's an environment variable set, grab it to turn on Segment
 # Note that this is the Studio key. There is a separate key for the LMS.
 import os
-SEGMENT_IO_KEY = os.environ.get('SEGMENT_IO_KEY')
-if SEGMENT_IO_KEY:
-    FEATURES['SEGMENT_IO'] = True
+CMS_SEGMENT_KEY = os.environ.get('SEGMENT_KEY')
 
 
 #####################################################################

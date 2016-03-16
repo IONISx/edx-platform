@@ -167,6 +167,8 @@ class DraftModuleStore(MongoModuleStore):
         self.collection.remove(course_query, multi=True)
         self.delete_all_asset_metadata(course_key, user_id)
 
+        self._emit_course_deleted_signal(course_key)
+
     def clone_course(self, source_course_id, dest_course_id, user_id, fields=None, **kwargs):
         """
         Only called if cloning within this store or if env doesn't set up mixed.
@@ -752,6 +754,10 @@ class DraftModuleStore(MongoModuleStore):
         NOTE: unlike publish, this gives an error if called above the draftable level as it's intended
         to remove things from the published version
         """
+        # ensure we are not creating a DRAFT of an item that is direct-only
+        if location.category in DIRECT_ONLY_CATEGORIES:
+            raise InvalidVersionError(location)
+
         self._verify_branch_setting(ModuleStoreEnum.Branch.draft_preferred)
         self._convert_to_draft(location, user_id, delete_published=True)
 

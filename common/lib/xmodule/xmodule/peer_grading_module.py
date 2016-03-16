@@ -1,3 +1,6 @@
+"""
+ORA1. Deprecated.
+"""
 import json
 import logging
 
@@ -23,9 +26,9 @@ from open_ended_grading_classes import combined_open_ended_rubric
 
 log = logging.getLogger(__name__)
 
-# Make '_' a no-op so we can scrape strings
+# Make '_' a no-op so we can scrape strings. Using lambda instead of
+#  `django.utils.translation.ugettext_noop` because Django cannot be imported in this file
 _ = lambda text: text
-
 
 EXTERNAL_GRADER_NO_CONTACT_ERROR = "Failed to contact external graders.  Please notify course staff."
 MAX_ALLOWED_FEEDBACK_LENGTH = 5000
@@ -118,7 +121,7 @@ class PeerGradingModule(PeerGradingFields, XModule):
 
         # We need to set the location here so the child modules can use it.
         self.runtime.set('location', self.location)
-        if (self.runtime.open_ended_grading_interface):
+        if self.runtime.open_ended_grading_interface:
             self.peer_gs = PeerGradingService(self.system.open_ended_grading_interface, self.system.render_template)
         else:
             self.peer_gs = MockPeerGradingService()

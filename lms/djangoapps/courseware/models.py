@@ -25,6 +25,7 @@ from model_utils.models import TimeStampedModel
 from student.models import user_by_anonymous_id
 from submissions.models import score_set, score_reset
 
+from openedx.core.djangoapps.call_stack_manager import CallStackManager, CallStackMixin
 from xmodule_django.models import CourseKeyField, LocationKeyField, BlockTypeKeyField  # pylint: disable=import-error
 log = logging.getLogger(__name__)
 
@@ -68,10 +69,21 @@ class ChunkingManager(models.Manager):
         return res
 
 
-class StudentModule(models.Model):
+class ChunkingCallStackManager(CallStackManager, ChunkingManager):
+    """
+    A derived class of ChunkingManager, and CallStackManager
+
+    Class is currently unused but remains as part of the CallStackManger work. To re-enable see comment in StudentModule
+    """
+    pass
+
+
+class StudentModule(CallStackMixin, models.Model):
     """
     Keeps student state for a particular module in a particular course.
     """
+    # Changed back to ChunkingManager from ChunkingCallStackManger. To re-enable CallStack Management change the line
+    # back to: objects = ChunkingCallStackManager() Ticket: PLAT-881
     objects = ChunkingManager()
     MODEL_TAGS = ['course_id', 'module_type']
 
@@ -93,7 +105,7 @@ class StudentModule(models.Model):
 
     course_id = CourseKeyField(max_length=255, db_index=True)
 
-    class Meta(object):  # pylint: disable=missing-docstring
+    class Meta(object):
         unique_together = (('student', 'module_state_key', 'course_id'),)
 
     # Internal state of the object
@@ -133,7 +145,10 @@ class StudentModule(models.Model):
         return 'StudentModule<%r>' % ({
             'course_id': self.course_id,
             'module_type': self.module_type,
-            'student': self.student.username,  # pylint: disable=no-member
+            # We use the student_id instead of username to avoid a database hop.
+            # This can actually matter in cases where we're logging many of
+            # these (e.g. on a broken progress page).
+            'student_id': self.student_id,  # pylint: disable=no-member
             'module_state_key': self.module_state_key,
             'state': str(self.state)[:20],
         },)
@@ -142,13 +157,14 @@ class StudentModule(models.Model):
         return unicode(repr(self))
 
 
-class StudentModuleHistory(models.Model):
+class StudentModuleHistory(CallStackMixin, models.Model):
     """Keeps a complete history of state changes for a given XModule for a given
     Student. Right now, we restrict this to problems so that the table doesn't
     explode in size."""
+    objects = CallStackManager()
     HISTORY_SAVING_TYPES = {'problem'}
 
-    class Meta(object):  # pylint: disable=missing-docstring
+    class Meta(object):
         get_latest_by = "created"
 
     student_module = models.ForeignKey(StudentModule, db_index=True)
@@ -183,7 +199,7 @@ class XBlockFieldBase(models.Model):
     """
     objects = ChunkingManager()
 
-    class Meta(object):  # pylint: disable=missing-docstring
+    class Meta(object):
         abstract = True
 
     # The name of the field
@@ -210,7 +226,7 @@ class XModuleUserStateSummaryField(XBlockFieldBase):
     """
     Stores data set in the Scope.user_state_summary scope by an xmodule field
     """
-    class Meta(object):  # pylint: disable=missing-docstring
+    class Meta(object):
         unique_together = (('usage_id', 'field_name'),)
 
     # The definition id for the module
@@ -221,7 +237,7 @@ class XModuleStudentPrefsField(XBlockFieldBase):
     """
     Stores data set in the Scope.preferences scope by an xmodule field
     """
-    class Meta(object):  # pylint: disable=missing-docstring
+    class Meta(object):
         unique_together = (('student', 'module_type', 'field_name'),)
 
     # The type of the module for these preferences
@@ -234,8 +250,9 @@ class XModuleStudentInfoField(XBlockFieldBase):
     """
     Stores data set in the Scope.preferences scope by an xmodule field
     """
-    class Meta(object):  # pylint: disable=missing-docstring
+    class Meta(object):
         unique_together = (('student', 'field_name'),)
+
     student = models.ForeignKey(User, db_index=True)
 
 
@@ -251,7 +268,7 @@ class OfflineComputedGrade(models.Model):
 
     gradeset = models.TextField(null=True, blank=True)		# grades, stored as JSON
 
-    class Meta(object):  # pylint: disable=missing-docstring
+    class Meta(object):
         unique_together = (('user', 'course_id'), )
 
     def __unicode__(self):
@@ -263,7 +280,7 @@ class OfflineComputedGradeLog(models.Model):
     Log of when offline grades are computed.
     Use this to be able to show instructor when the last computed grades were done.
     """
-    class Meta(object):  # pylint: disable=missing-docstring
+    class Meta(object):
         ordering = ["-created"]
         get_latest_by = "created"
 
@@ -286,7 +303,7 @@ class StudentFieldOverride(TimeStampedModel):
     location = LocationKeyField(max_length=255, db_index=True)
     student = models.ForeignKey(User, db_index=True)
 
-    class Meta(object):   # pylint: disable=missing-docstring
+    class Meta(object):
         unique_together = (('course_id', 'field', 'location', 'student'),)
 
     field = models.CharField(max_length=255)

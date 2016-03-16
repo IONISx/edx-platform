@@ -1,52 +1,46 @@
-var edx = edx || {};
-
-(function($, _, gettext) {
+;(function (define) {
     'use strict';
+    define(['jquery', 'underscore', 'backbone'],
+        function($, _, Backbone) {
 
-    edx.student = edx.student || {};
-    edx.student.account = edx.student.account || {};
+        return Backbone.View.extend({
+            el: '#hinted-login-form',
 
-    edx.student.account.HintedLoginView = Backbone.View.extend({
-        el: '#hinted-login-form',
+            tpl: '#hinted_login-tpl',
 
-        tpl: '#hinted_login-tpl',
+            events: {
+                'click .proceed-button': 'proceedWithHintedAuth'
+            },
 
-        events: {
-            'click .proceed-button': 'proceedWithHintedAuth'
-        },
+            formType: 'hinted-login',
 
-        formType: 'hinted-login',
+            initialize: function( data ) {
+                this.tpl = $(this.tpl).html();
+                this.hintedProvider = (
+                    _.findWhere(data.thirdPartyAuth.providers, {id: data.hintedProvider}) ||
+                    _.findWhere(data.thirdPartyAuth.secondaryProviders, {id: data.hintedProvider})
+                );
+            },
 
-        initialize: function( data ) {
-            this.tpl = $(this.tpl).html();
-            this.providers = data.thirdPartyAuth.providers || [];
-            this.hintedProvider = _.findWhere(this.providers, {id: data.hintedProvider})
-            this.platformName = data.platformName;
+            render: function() {
+                $(this.el).html( _.template( this.tpl, {
+                    hintedProvider: this.hintedProvider
+                }));
 
-        },
+                return this;
+            },
 
-        render: function() {
-            $(this.el).html( _.template( this.tpl, {
-                // We pass the context object to the template so that
-                // we can perform variable interpolation using sprintf
-                providers: this.providers,
-                platformName: this.platformName,
-                hintedProvider: this.hintedProvider
-            }));
+            proceedWithHintedAuth: function( event ) {
+                this.redirect(this.hintedProvider.loginUrl);
+            },
 
-            return this;
-        },
-
-        proceedWithHintedAuth: function( event ) {
-            this.redirect(this.hintedProvider.loginUrl);
-        },
-
-        /**
-         * Redirect to a URL.  Mainly useful for mocking out in tests.
-         * @param  {string} url The URL to redirect to.
-         */
-        redirect: function( url ) {
-            window.location.href = url;
-        }
+            /**
+             * Redirect to a URL.  Mainly useful for mocking out in tests.
+             * @param  {string} url The URL to redirect to.
+             */
+            redirect: function( url ) {
+                window.location.href = url;
+            }
+        });
     });
-})(jQuery, _, gettext);
+}).call(this, define || RequireJS.define);

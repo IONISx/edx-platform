@@ -1,6 +1,4 @@
 """ Tests for library reindex command """
-import sys
-import contextlib
 import ddt
 from django.core.management import call_command, CommandError
 import mock
@@ -8,33 +6,13 @@ import mock
 from xmodule.modulestore import ModuleStoreEnum
 from xmodule.modulestore.django import modulestore
 from xmodule.modulestore.tests.django_utils import ModuleStoreTestCase
+from common.test.utils import nostderr
 from xmodule.modulestore.tests.factories import CourseFactory, LibraryFactory
 
 from opaque_keys import InvalidKeyError
 
 from contentstore.management.commands.reindex_library import Command as ReindexCommand
 from contentstore.courseware_index import SearchIndexingError
-
-
-@contextlib.contextmanager
-def nostderr():
-    """
-    ContextManager to suppress stderr messages
-    http://stackoverflow.com/a/1810086/882918
-    """
-    savestderr = sys.stderr
-
-    class Devnull(object):
-        """ /dev/null incarnation as output-stream-like object """
-        def write(self, _):
-            """ Write method - just does nothing"""
-            pass
-
-    sys.stderr = Devnull()
-    try:
-        yield
-    finally:
-        sys.stderr = savestderr
 
 
 @ddt.ddt
@@ -130,7 +108,7 @@ class TestReindexLibrary(ModuleStoreTestCase):
 
                 patched_yes_no.assert_called_once_with(ReindexCommand.CONFIRMATION_PROMPT, default='no')
                 expected_calls = self._build_calls(self.first_lib, self.second_lib)
-                self.assertEqual(patched_index.mock_calls, expected_calls)
+                self.assertItemsEqual(patched_index.mock_calls, expected_calls)
 
     def test_given_all_key_prompts_and_reindexes_all_libraries_cancelled(self):
         """ Test that does not reindex anything when --all key is given and cancelled """

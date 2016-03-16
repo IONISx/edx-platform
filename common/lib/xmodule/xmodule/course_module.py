@@ -5,7 +5,7 @@ import logging
 from cStringIO import StringIO
 from math import exp
 from lxml import etree
-from path import path  # NOTE (THK): Only used for detecting presence of syllabus
+from path import Path as path
 import requests
 from datetime import datetime
 import dateutil.parser
@@ -16,10 +16,11 @@ from xmodule.course_metadata_utils import DEFAULT_START_DATE
 from xmodule.exceptions import UndefinedContext
 from xmodule.seq_module import SequenceDescriptor, SequenceModule
 from xmodule.graders import grader_from_conf
-from xmodule.tabs import CourseTabList
+from xmodule.tabs import CourseTabList, InvalidTabsException
 from xmodule.mixin import LicenseMixin
 import json
 
+from xblock.core import XBlock
 from xblock.fields import Scope, List, String, Dict, Boolean, Integer, Float
 from .fields import Date
 from django.utils.timezone import UTC
@@ -27,7 +28,8 @@ from django.utils.timezone import UTC
 
 log = logging.getLogger(__name__)
 
-# Make '_' a no-op so we can scrape strings
+# Make '_' a no-op so we can scrape strings. Using lambda instead of
+#  `django.utils.translation.ugettext_noop` because Django cannot be imported in this file
 _ = lambda text: text
 
 CATALOG_VISIBILITY_CATALOG_AND_ABOUT = "both"
@@ -117,7 +119,7 @@ class Textbook(object):
             pass
 
         # Get the table of contents from S3
-        log.info("Retrieving textbook table of contents from %s" % toc_url)
+        log.info("Retrieving textbook table of contents from %s", toc_url)
         try:
             r = requests.get(toc_url)
         except Exception as err:
@@ -269,17 +271,12 @@ class CourseFields(object):
         scope=Scope.settings,
         deprecated=True  # Deprecated because someone would not edit this value within Studio.
     )
-    show_chat = Boolean(
-        display_name=_("Show Chat Widget"),
-        help=_("Enter true or false. When true, students can see the chat widget in the course."),
-        default=False,
-        scope=Scope.settings
-    )
     tabs = CourseTabList(help="List of tabs to enable in this course", scope=Scope.settings, default=[])
     end_of_course_survey_url = String(
         display_name=_("Course Survey URL"),
         help=_("Enter the URL for the end-of-course survey. If your course does not have a survey, enter null."),
-        scope=Scope.settings
+        scope=Scope.settings,
+        deprecated=True  # We wish to remove this entirely, TNL-3399
     )
     discussion_blackouts = List(
         display_name=_("Discussion Blackout Dates"),
@@ -712,6 +709,12 @@ class CourseFields(object):
         scope=Scope.settings,
         default=""
     )
+    cert_html_view_enabled = Boolean(
+        display_name=_("Certificate Web/HTML View Enabled"),
+        help=_("If true, certificate Web/HTML views are enabled for the course."),
+        scope=Scope.settings,
+        default=False,
+    )
     cert_html_view_overrides = Dict(
         # Translators: This field is the container for course-specific certifcate configuration values
         display_name=_("Certificate Web/HTML View Overrides"),
@@ -897,6 +900,26 @@ class CourseFields(object):
             "Enter configuration for the teams feature. Expects two entries: max_team_size and topics, where "
             "topics is a list of topics."
         ),
+        scope=Scope.settings,
+        deprecated=True,  # Deprecated until the teams feature is made generally available
+    )
+
+    enable_proctored_exams = Boolean(
+        display_name=_("Enable Proctored Exams"),
+        help=_(
+            "Enter true or false. If this value is true, proctored exams are enabled in your course. "
+            "Note that enabling proctored exams will also enable timed exams."
+        ),
+        default=False,
+        scope=Scope.settings
+    )
+
+    enable_timed_exams = Boolean(
+        display_name=_("Enable Timed Exams"),
+        help=_(
+            "Enter true or false. If this value is true, timed exams are enabled in your course."
+        ),
+        default=False,
         scope=Scope.settings
     )
 
@@ -908,6 +931,17 @@ class CourseFields(object):
         ),
         default=0.8,
         scope=Scope.settings,
+    )
+
+    self_paced = Boolean(
+        display_name=_("Self Paced"),
+        help=_(
+            "Set this to \"true\" to mark this course as self-paced. Self-paced courses do not have "
+            "due dates for assignments, and students can progress through the course at any rate before "
+            "the course ends."
+        ),
+        default=False,
+        scope=Scope.settings
     )
 
 
@@ -959,8 +993,11 @@ class CourseDescriptor(CourseFields, SequenceDescriptor, LicenseMixin):
         if self.discussion_topics == {}:
             self.discussion_topics = {_('General'): {'id': self.location.html_id()}}
 
-        if not getattr(self, "tabs", []):
-            CourseTabList.initialize_default(self)
+        try:
+            if not getattr(self, "tabs", []):
+                CourseTabList.initialize_default(self)
+        except InvalidTabsException as err:
+            raise type(err)('{msg} For course: {course_id}'.format(msg=err.message, course_id=unicode(self.id)))
 
     def set_grading_policy(self, course_policy):
         """
@@ -1002,7 +1039,7 @@ class CourseDescriptor(CourseFields, SequenceDescriptor, LicenseMixin):
                     policy_str = grading_policy_file.read()
                     # if we successfully read the file, stop looking at backups
                     break
-            except (IOError):
+            except IOError:
                 msg = "Unable to load course settings file from '{0}'".format(policy_path)
                 log.warning(msg)
 
@@ -1315,11 +1352,15 @@ class CourseDescriptor(CourseFields, SequenceDescriptor, LicenseMixin):
         except UndefinedContext:
             module = self
 
+        def possibly_scored(usage_key):
+            """Can this XBlock type can have a score or children?"""
+            return usage_key.block_type in self.block_types_affecting_grading
+
         all_descriptors = []
         graded_sections = {}
 
         def yield_descriptor_descendents(module_descriptor):
-            for child in module_descriptor.get_children():
+            for child in module_descriptor.get_children(usage_key_filter=possibly_scored):
                 yield child
                 for module_descriptor in yield_descriptor_descendents(child):
                     yield module_descriptor
@@ -1344,6 +1385,15 @@ class CourseDescriptor(CourseFields, SequenceDescriptor, LicenseMixin):
 
         return {'graded_sections': graded_sections,
                 'all_descriptors': all_descriptors, }
+
+    @lazy
+    def block_types_affecting_grading(self):
+        """Return all block types that could impact grading (i.e. scored, or having children)."""
+        return frozenset(
+            cat for (cat, xblock_class) in XBlock.load_classes() if (
+                getattr(xblock_class, 'has_score', False) or getattr(xblock_class, 'has_children', False)
+            )
+        )
 
     @staticmethod
     def make_id(org, course, url_name):
@@ -1503,3 +1553,49 @@ class CourseDescriptor(CourseFields, SequenceDescriptor, LicenseMixin):
         Returns the topics that have been configured for teams for this course, else None.
         """
         return self.teams_configuration.get('topics', None)
+
+    def get_user_partitions_for_scheme(self, scheme):
+        """
+        Retrieve all user partitions defined in the course for a particular
+        partition scheme.
+
+        Arguments:
+            scheme (object): The user partition scheme.
+
+        Returns:
+            list of `UserPartition`
+
+        """
+        return [
+            p for p in self.user_partitions
+            if p.scheme == scheme
+        ]
+
+    def set_user_partitions_for_scheme(self, partitions, scheme):
+        """
+        Set the user partitions for a particular scheme.
+
+        Preserves partitions associated with other schemes.
+
+        Arguments:
+            scheme (object): The user partition scheme.
+
+        Returns:
+            list of `UserPartition`
+
+        """
+        other_partitions = [
+            p for p in self.user_partitions  # pylint: disable=access-member-before-definition
+            if p.scheme != scheme
+        ]
+        self.user_partitions = other_partitions + partitions  # pylint: disable=attribute-defined-outside-init
+
+    @property
+    def can_toggle_course_pacing(self):
+        """
+        Whether or not the course can be set to self-paced at this time.
+
+        Returns:
+          bool: False if the course has already started, True otherwise.
+        """
+        return datetime.now(UTC()) <= self.start

@@ -1,8 +1,8 @@
 ;(function (define, undefined) {
     'use strict';
     define([
-        'gettext', 'jquery', 'underscore', 'backbone', 'js/mustache', 'js/views/fields'
-    ], function (gettext, $, _, Backbone, RequireMustache, FieldViews) {
+        'gettext', 'jquery', 'underscore', 'backbone', 'js/views/fields'
+    ], function (gettext, $, _, Backbone, FieldViews) {
 
         var AccountSettingsFieldViews = {};
 
@@ -99,12 +99,13 @@
             },
 
             saveValue: function () {
-                var attributes = {},
-                    value = this.fieldValue() ? [{'code': this.fieldValue()}] : [];
-                attributes[this.options.valueAttribute] = value;
-                this.saveAttributes(attributes);
+                if (this.persistChanges === true) {
+                    var attributes = {},
+                        value = this.fieldValue() ? [{'code': this.fieldValue()}] : [];
+                    attributes[this.options.valueAttribute] = value;
+                    this.saveAttributes(attributes);
+                }
             }
-
         });
 
         AccountSettingsFieldViews.AuthFieldView = FieldViews.LinkFieldView.extend({
@@ -115,11 +116,20 @@
             },
 
             render: function () {
+                var linkTitle;
+                if (this.options.connected) {
+                    linkTitle = gettext('Unlink');
+                } else if (this.options.acceptsLogins) {
+                    linkTitle = gettext('Link')
+                } else {
+                    linkTitle = ''
+                }
+
                 this.$el.html(this.template({
                     id: this.options.valueAttribute,
                     title: this.options.title,
                     screenReaderTitle: this.options.screenReaderTitle,
-                    linkTitle: this.options.connected ? gettext('Unlink') : gettext('Link'),
+                    linkTitle: linkTitle,
                     linkHref: '',
                     message: this.helpMessage
                 }));

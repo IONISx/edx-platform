@@ -116,11 +116,19 @@ class DiscussionThreadPage(PageObject, DiscussionPageMixin):
     def is_discussion_body_visible(self):
         return self._is_element_visible(".post-body")
 
-    def is_mathjax_preview_available(self):
-        return self.q(css=".MathJax_Preview").text[0] == ""
+    def verify_mathjax_preview_available(self):
+        """ Checks that MathJax Preview css class is present """
+        self.wait_for(
+            lambda: len(self.q(css=".MathJax_Preview").text) > 0 and self.q(css=".MathJax_Preview").text[0] == "",
+            description="MathJax Preview is rendered"
+        )
 
-    def is_mathjax_rendered(self):
-        return self._is_element_visible(".MathJax")
+    def verify_mathjax_rendered(self):
+        """ Checks that MathJax css class is present """
+        self.wait_for(
+            lambda: self._is_element_visible(".MathJax"),
+            description="MathJax Preview is rendered"
+        )
 
     def is_response_visible(self, comment_id):
         """Returns true if the response is viewable onscreen"""
@@ -142,6 +150,11 @@ class DiscussionThreadPage(PageObject, DiscussionPageMixin):
                 lambda: self.is_response_editor_visible(response_id),
                 "Response edit started"
             ).fulfill()
+
+    def get_link_href(self):
+        """Extracts href attribute of the referenced link"""
+        link_href = self._find_within(".post-body p a").attrs('href')
+        return link_href[0] if link_href else None
 
     def get_response_vote_count(self, response_id):
         return self._get_element_text(".response_{} .discussion-response .action-vote .vote-count".format(response_id))
@@ -384,7 +397,7 @@ class InlineDiscussionPage(PageObject):
     def __init__(self, browser, discussion_id):
         super(InlineDiscussionPage, self).__init__(browser)
         self._discussion_selector = (
-            "body.courseware .discussion-module[data-discussion-id='{discussion_id}'] ".format(
+            ".discussion-module[data-discussion-id='{discussion_id}'] ".format(
                 discussion_id=discussion_id
             )
         )
@@ -397,6 +410,7 @@ class InlineDiscussionPage(PageObject):
         return self.q(css=self._discussion_selector + " " + selector)
 
     def is_browser_on_page(self):
+        self.wait_for_ajax()
         return self.q(css=self._discussion_selector).present
 
     def is_discussion_expanded(self):
@@ -412,6 +426,10 @@ class InlineDiscussionPage(PageObject):
 
     def get_num_displayed_threads(self):
         return len(self._find_within(".discussion-thread"))
+
+    def has_thread(self, thread_id):
+        """Returns true if this page is showing the thread with the specified id."""
+        return self._find_within('.discussion-thread#thread_{}'.format(thread_id)).present
 
     def element_exists(self, selector):
         return self.q(css=self._discussion_selector + " " + selector).present
