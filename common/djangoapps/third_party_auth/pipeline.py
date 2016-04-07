@@ -429,7 +429,7 @@ def parse_query_params(strategy, response, *args, **kwargs):
     """Reads whitelisted query params, transforms them into pipeline args."""
     auth_entry = strategy.session.get(AUTH_ENTRY_KEY)
     if not (auth_entry and auth_entry in _AUTH_ENTRY_CHOICES):
-        auth_entry = AUTH_ENTRY_LOGIN
+        raise AuthEntryError(strategy.request.backend, 'auth_entry missing or invalid')
 
     return {'auth_entry': auth_entry}
 

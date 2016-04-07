@@ -320,6 +320,9 @@ SESSION_INACTIVITY_TIMEOUT_IN_SECONDS = AUTH_TOKENS.get("SESSION_INACTIVITY_TIME
 ##### X-Frame-Options response header settings #####
 X_FRAME_OPTIONS = ENV_TOKENS.get('X_FRAME_OPTIONS', X_FRAME_OPTIONS)
 
+##### IONISx auth configuration
+IONISX_AUTH = AUTH_TOKENS.get('IONISX_AUTH')
+
 ##### Third-party auth options ################################################
 if FEATURES.get('ENABLE_THIRD_PARTY_AUTH'):
     AUTHENTICATION_BACKENDS = (
@@ -327,19 +330,29 @@ if FEATURES.get('ENABLE_THIRD_PARTY_AUTH'):
             'social.backends.google.GoogleOAuth2',
             'social.backends.linkedin.LinkedinOAuth2',
             'social.backends.facebook.FacebookOAuth2',
-            'third_party_auth.saml.SAMLAuthBackend'
+            'third_party_auth.saml.SAMLAuthBackend',
+            'third_party_auth.lti.LTIAuthBackend',
         ]) + list(AUTHENTICATION_BACKENDS)
     )
 
-    MIDDLEWARE_CLASSES += ('third_party_auth.middleware.PortalSynchronizerMiddleware',)
+    if IONISX_AUTH:
+        MIDDLEWARE_CLASSES += ('third_party_auth.middleware.PortalSynchronizerMiddleware',)
 
     # The reduced session expiry time during the third party login pipeline. (Value in seconds)
     SOCIAL_AUTH_PIPELINE_TIMEOUT = ENV_TOKENS.get('SOCIAL_AUTH_PIPELINE_TIMEOUT', 600)
 
+    # Most provider configuration is done via ConfigurationModels but for a few sensitive values
+    # we allow configuration via AUTH_TOKENS instead (optionally).
+    # The SAML private/public key values do not need the delimiter lines (such as
+    # "-----BEGIN PRIVATE KEY-----", "-----END PRIVATE KEY-----" etc.) but they may be included
+    # if you want (though it's easier to format the key values as JSON without the delimiters).
+    SOCIAL_AUTH_SAML_SP_PRIVATE_KEY = AUTH_TOKENS.get('SOCIAL_AUTH_SAML_SP_PRIVATE_KEY', '')
+    SOCIAL_AUTH_SAML_SP_PUBLIC_CERT = AUTH_TOKENS.get('SOCIAL_AUTH_SAML_SP_PUBLIC_CERT', '')
+    SOCIAL_AUTH_OAUTH_SECRETS = AUTH_TOKENS.get('SOCIAL_AUTH_OAUTH_SECRETS', {})
+    SOCIAL_AUTH_LTI_CONSUMER_SECRETS = AUTH_TOKENS.get('SOCIAL_AUTH_LTI_CONSUMER_SECRETS', {})
+
     # third_party_auth config moved to ConfigurationModels. This is for data migration only:
     THIRD_PARTY_AUTH_OLD_CONFIG = AUTH_TOKENS.get('THIRD_PARTY_AUTH', None)
-
-IONISX_AUTH = AUTH_TOKENS.get('IONISX_AUTH')
 
 ##### ADVANCED_SECURITY_CONFIG #####
 ADVANCED_SECURITY_CONFIG = ENV_TOKENS.get('ADVANCED_SECURITY_CONFIG', {})

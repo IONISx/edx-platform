@@ -1296,7 +1296,14 @@ def logout_user(request):
     # We do not log here, because we have a handler registered
     # to perform logging on successful logouts.
     logout(request)
-    response = redirect(settings.IONISX_AUTH.get('LOGOUT_URL'))
+    if settings.IONISX_AUTH:
+        target = settings.IONISX_AUTH.get('LOGOUT_URL')
+    elif settings.FEATURES.get('AUTH_USE_CAS'):
+        target = reverse('cas-logout')
+    else:
+        target = '/'
+    response = redirect(target)
+
     delete_logged_in_cookies(response)
     return response
 

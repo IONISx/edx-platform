@@ -2710,3 +2710,7 @@ PROCTORING_BACKEND_PROVIDER = {
     'options': {},
 }
 PROCTORING_SETTINGS = {}
+
+### IONISx Configuration
+
+IONISX_AUTH = None

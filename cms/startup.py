@@ -2,6 +2,8 @@
 Module with code executed during Studio startup
 """
 
+import sys
+
 from django.conf import settings
 
 # Force settings to run so that the python path is modified
@@ -92,3 +94,14 @@ def enable_third_party_auth():
 
     from third_party_auth import settings as auth_settings
     auth_settings.apply_settings(settings)
+
+    # Override studio-specific settings
+    settings.SOCIAL_AUTH_LOGIN_REDIRECT_URL = '/home'
+
+    # Let's reload social.*
+    # This is really dirty, but `autostartup` loads social and it
+    # should not.
+    for module_name in [m for m in sys.modules if m.startswith('social.apps.django')]:
+        module = sys.modules.get(module_name)
+        if module:
+            reload(module)

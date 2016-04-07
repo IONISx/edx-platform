@@ -58,14 +58,26 @@ urlpatterns += patterns(
 
     url(r'^create_account$', 'student.views.create_account', name='create_account'),
     url(r'^activate/(?P<key>[^/]*)$', 'student.views.activate_account', name='activate'),
-    url(r'^signin$', 'student.views.signin_user', name="login"),
-    url(r'^signup$', 'student.views.signin_user', name='signup'),
-
 
     # ajax view that actually does the work
     url(r'^login_post$', 'student.views.login_user', name='login_post'),
     url(r'^logout$', 'student.views.logout_user', name='logout'),
 )
+
+if settings.IONISX_AUTH:
+    urlpatterns += patterns(
+        '',
+
+        url(r'^signup$', 'student.views.register_user', name='signup'),
+        url(r'^signin$', 'student.views.signin_user', name="login"),
+    )
+else:
+    urlpatterns += patterns(
+        'contentstore.views',
+
+        url(r'^signup$', 'signup', name='signup'),
+        url(r'^signin$', 'login_page', name='login'),
+    )
 
 # restful api
 urlpatterns += patterns(

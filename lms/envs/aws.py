@@ -549,6 +549,9 @@ TIME_ZONE_DISPLAYED_FOR_DEADLINES = ENV_TOKENS.get("TIME_ZONE_DISPLAYED_FOR_DEAD
 ##### X-Frame-Options response header settings #####
 X_FRAME_OPTIONS = ENV_TOKENS.get('X_FRAME_OPTIONS', X_FRAME_OPTIONS)
 
+##### IONISx auth configuration
+IONISX_AUTH = AUTH_TOKENS.get('IONISX_AUTH')
+
 ##### Third-party auth options ################################################
 if FEATURES.get('ENABLE_THIRD_PARTY_AUTH'):
     AUTHENTICATION_BACKENDS = (
@@ -561,7 +564,8 @@ if FEATURES.get('ENABLE_THIRD_PARTY_AUTH'):
         ]) + list(AUTHENTICATION_BACKENDS)
     )
 
-    MIDDLEWARE_CLASSES += ('third_party_auth.middleware.PortalSynchronizerMiddleware',)
+    if IONISX_AUTH:
+        MIDDLEWARE_CLASSES += ('third_party_auth.middleware.PortalSynchronizerMiddleware',)
 
     # The reduced session expiry time during the third party login pipeline. (Value in seconds)
     SOCIAL_AUTH_PIPELINE_TIMEOUT = ENV_TOKENS.get('SOCIAL_AUTH_PIPELINE_TIMEOUT', 600)
@@ -584,8 +588,6 @@ if FEATURES.get('ENABLE_THIRD_PARTY_AUTH'):
             'task': 'third_party_auth.fetch_saml_metadata',
             'schedule': datetime.timedelta(hours=ENV_TOKENS.get('THIRD_PARTY_AUTH_SAML_FETCH_PERIOD_HOURS', 24)),
         }
-
-IONISX_AUTH = AUTH_TOKENS.get('IONISX_AUTH')
 
 ##### OAUTH2 Provider ##############
 if FEATURES.get('ENABLE_OAUTH2_PROVIDER'):

@@ -138,11 +138,17 @@ class TrackMiddleware(object):
         context = {
             'session': self.get_session_key(request),
             'user_id': self.get_user_primary_key(request),
-            'ionisx_id': self.get_ionisx_user_id(request),
-            'ionisx_session': self.get_ionisx_session(request),
             'username': self.get_username(request),
             'ip': self.get_request_ip_address(request),
         }
+
+        # If IONISx authentication is enabled, add IONISx context
+        if settings.IONISX_AUTH:
+            context.update({
+                'ionisx_id': self.get_ionisx_user_id(request),
+                'ionisx_session': self.get_ionisx_session(request),
+            })
+
         for header_name, context_key in META_KEY_TO_CONTEXT_KEY.iteritems():
             context[context_key] = request.META.get(header_name, '')
 
