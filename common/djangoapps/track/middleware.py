@@ -14,6 +14,7 @@ import re
 import sys
 
 from django.conf import settings
+from ipware.ip import get_ip
 
 from social.apps.django_app.default import models as social_models
 
@@ -26,7 +27,6 @@ log = logging.getLogger(__name__)
 
 CONTEXT_NAME = 'edx.request'
 META_KEY_TO_CONTEXT_KEY = {
-    'REMOTE_ADDR': 'ip',
     'SERVER_NAME': 'host',
     'HTTP_USER_AGENT': 'agent',
     'PATH_INFO': 'path',
@@ -66,7 +66,7 @@ class TrackMiddleware(object):
             # files when we change this.
 
             censored_strings = ['password', 'newpassword', 'new_password',
-                                'oldpassword', 'old_password']
+                                'oldpassword', 'old_password', 'new_password1', 'new_password2']
             post_dict = dict(request.POST)
             get_dict = dict(request.GET)
             for string in censored_strings:
@@ -138,10 +138,17 @@ class TrackMiddleware(object):
         context = {
             'session': self.get_session_key(request),
             'user_id': self.get_user_primary_key(request),
-            'ionisx_id': self.get_ionisx_user_id(request),
-            'ionisx_session': self.get_ionisx_session(request),
             'username': self.get_username(request),
+            'ip': self.get_request_ip_address(request),
         }
+
+        # If IONISx authentication is enabled, add IONISx context
+        if settings.IONISX_AUTH:
+            context.update({
+                'ionisx_id': self.get_ionisx_user_id(request),
+                'ionisx_session': self.get_ionisx_session(request),
+            })
+
         for header_name, context_key in META_KEY_TO_CONTEXT_KEY.iteritems():
             context[context_key] = request.META.get(header_name, '')
 
@@ -149,7 +156,7 @@ class TrackMiddleware(object):
         # this: _ga=GA1.2.1033501218.1368477899. The clientId is this part: 1033501218.1368477899.
         google_analytics_cookie = request.COOKIES.get('_ga')
         if google_analytics_cookie is None:
-            context['client_id'] = None
+            context['client_id'] = request.META.get('HTTP_X_EDX_GA_CLIENT_ID')
         else:
             context['client_id'] = '.'.join(google_analytics_cookie.split('.')[2:])
 
@@ -220,6 +227,14 @@ class TrackMiddleware(object):
         try:
             return request.user.username
         except AttributeError:
+            return ''
+
+    def get_request_ip_address(self, request):
+        """Gets the IP address of the request"""
+        ip_address = get_ip(request)
+        if ip_address is not None:
+            return ip_address
+        else:
             return ''
 
     def process_response(self, _request, response):

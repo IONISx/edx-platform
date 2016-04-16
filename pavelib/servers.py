@@ -135,6 +135,7 @@ def devstack(args):
     if args.optimized:
         settings = OPTIMIZED_SETTINGS
         asset_settings = OPTIMIZED_ASSETS_SETTINGS
+    sh(django_cmd('cms', settings, 'reindex_course', '--setup'))
     run_server(
         args.system[0],
         fast=args.fast,
@@ -166,9 +167,9 @@ def celery(options):
     ("fast", "f", "Skip updating assets"),
     ("optimized", "o", "Run with optimized assets"),
     ("settings_lms=", "l", "Set LMS only, overriding the value from --settings (if provided)"),
-    ("asset_settings_lms=", "al", "Set LMS only, overriding the value from --asset_settings (if provided)"),
+    ("asset_settings_lms=", None, "Set LMS only, overriding the value from --asset_settings (if provided)"),
     ("settings_cms=", "c", "Set Studio only, overriding the value from --settings (if provided)"),
-    ("asset_settings_cms=", "ac", "Set Studio only, overriding the value from --asset_settings (if provided)"),
+    ("asset_settings_cms=", None, "Set Studio only, overriding the value from --asset_settings (if provided)"),
 ])
 def run_all_servers(options):
     """
@@ -262,5 +263,5 @@ def check_settings(args):
         django_shell_cmd = django_cmd(system, settings, 'shell', '--plain', '--pythonpath=.')
         sh("{import_cmd} | {shell_cmd}".format(import_cmd=import_cmd, shell_cmd=django_shell_cmd))
 
-    except:
+    except:  # pylint: disable=bare-except
         print("Failed to import settings", file=sys.stderr)

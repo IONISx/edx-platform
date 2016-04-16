@@ -244,7 +244,39 @@
       }
     }
   }
+  .report-receipt-provider {
+    @extend %ui-window;
+    padding: ($baseline*0.75) $baseline;
 
+    .provider-wrapper {
+      width: 70%;
+      @include float(left);
+
+      .provider-info {
+        margin-bottom: $baseline;
+        font-weight: 600;
+      }
+    }
+
+    .provider-buttons-logos {
+      @include float(right);
+      @include text-align(center);
+
+      .provider-logo img {
+          max-width: 160px;
+          margin-bottom: $baseline * 0.5;
+      }
+
+      .complete-order {
+        @include text-align(center);
+
+        button {
+          @extend %btn-pl-primary-base;
+          white-space: nowrap;
+        }
+      }
+    }
+  }
   // ====================
 
   // UI: help
@@ -1280,7 +1312,7 @@
         display: block;
         width: 45px;
         height: 45px;
-        background: transparent url('../images/verified-ribbon.png') no-repeat 0 0;
+        background: transparent url('#{$static-path}/images/verified-ribbon.png') no-repeat 0 0;
       }
 
       .action-intro, .action-select {

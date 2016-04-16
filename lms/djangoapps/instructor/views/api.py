@@ -18,6 +18,7 @@ from django.views.decorators.cache import cache_control
 from django.core.exceptions import ValidationError, PermissionDenied
 from django.core.mail.message import EmailMessage
 from django.db import IntegrityError
+from django.core.exceptions import ObjectDoesNotExist, MultipleObjectsReturned
 from django.core.urlresolvers import reverse
 from django.core.validators import validate_email
 from django.utils.translation import ugettext as _
@@ -35,7 +36,7 @@ from util.file import (
     store_uploaded_file, course_and_time_based_filename_generator,
     FileValidationException, UniversalNewlineIterator
 )
-from util.json_request import JsonResponse
+from util.json_request import JsonResponse, JsonResponseBadRequest
 from instructor.views.instructor_task_helpers import extract_email_features, extract_task_features
 
 from microsite_configuration import microsite
@@ -91,8 +92,10 @@ from instructor.views import INVOICE_KEY
 from submissions import api as sub_api  # installed from the edx-submissions repository
 
 from certificates import api as certs_api
+from certificates.models import CertificateWhitelist
 
 from bulk_email.models import CourseEmail
+from student.models import get_user_by_username_or_email
 
 from .tools import (
     dump_student_extensions,
@@ -107,7 +110,7 @@ from .tools import (
     bulk_email_is_enabled_for_course,
     add_block_ids,
 )
-from opaque_keys.edx.keys import CourseKey
+from opaque_keys.edx.keys import CourseKey, UsageKey
 from opaque_keys.edx.locations import SlashSeparatedCourseKey
 from opaque_keys import InvalidKeyError
 from openedx.core.djangoapps.course_groups.cohorts import is_course_cohorted
@@ -274,7 +277,7 @@ def require_sales_admin(func):
             log.error(u"Unable to find course with course key %s", course_id)
             return HttpResponseNotFound()
 
-        access = auth.has_access(request.user, CourseSalesAdminRole(course_key))
+        access = auth.user_has_role(request.user, CourseSalesAdminRole(course_key))
 
         if access:
             return func(request, course_id)
@@ -299,7 +302,7 @@ def require_finance_admin(func):
             log.error(u"Unable to find course with course key %s", course_id)
             return HttpResponseNotFound()
 
-        access = auth.has_access(request.user, CourseFinanceAdminRole(course_key))
+        access = auth.user_has_role(request.user, CourseFinanceAdminRole(course_key))
 
         if access:
             return func(request, course_id)
@@ -890,6 +893,51 @@ def list_course_role_members(request, course_id):
 @ensure_csrf_cookie
 @cache_control(no_cache=True, no_store=True, must_revalidate=True)
 @require_level('staff')
+def get_problem_responses(request, course_id):
+    """
+    Initiate generation of a CSV file containing all student answers
+    to a given problem.
+
+    Responds with JSON
+        {"status": "... status message ..."}
+
+    if initiation is successful (or generation task is already running).
+
+    Responds with BadRequest if problem location is faulty.
+    """
+    course_key = CourseKey.from_string(course_id)
+    problem_location = request.GET.get('problem_location', '')
+
+    try:
+        problem_key = UsageKey.from_string(problem_location)
+        # Are we dealing with an "old-style" problem location?
+        run = getattr(problem_key, 'run')
+        if not run:
+            problem_key = course_key.make_usage_key_from_deprecated_string(problem_location)
+        if problem_key.course_key != course_key:
+            raise InvalidKeyError(type(problem_key), problem_key)
+    except InvalidKeyError:
+        return JsonResponseBadRequest(_("Could not find problem with this location."))
+
+    try:
+        instructor_task.api.submit_calculate_problem_responses_csv(request, course_key, problem_location)
+        success_status = _(
+            "The problem responses report is being created."
+            " To view the status of the report, see Pending Tasks below."
+        )
+        return JsonResponse({"status": success_status})
+    except AlreadyRunningError:
+        already_running_status = _(
+            "A problem responses report generation task is already in progress. "
+            "Check the 'Pending Tasks' table for the status of the task. "
+            "When completed, the report will be available for download in the table below."
+        )
+        return JsonResponse({"status": already_running_status})
+
+
+@ensure_csrf_cookie
+@cache_control(no_cache=True, no_store=True, must_revalidate=True)
+@require_level('staff')
 def get_grading_config(request, course_id):
     """
     Respond with json which contains a html formatted grade summary.
@@ -1047,6 +1095,45 @@ def re_validate_invoice(obj_invoice):
 @ensure_csrf_cookie
 @cache_control(no_cache=True, no_store=True, must_revalidate=True)
 @require_level('staff')
+def get_issued_certificates(request, course_id):  # pylint: disable=invalid-name
+    """
+    Responds with JSON if CSV is not required. contains a list of issued certificates.
+    Arguments:
+        course_id
+    Returns:
+        {"certificates": [{course_id: xyz, mode: 'honor'}, ...]}
+
+    """
+    course_key = CourseKey.from_string(course_id)
+    csv_required = request.GET.get('csv', 'false')
+
+    query_features = ['course_id', 'mode', 'total_issued_certificate', 'report_run_date']
+    query_features_names = [
+        ('course_id', _('CourseID')),
+        ('mode', _('Certificate Type')),
+        ('total_issued_certificate', _('Total Certificates Issued')),
+        ('report_run_date', _('Date Report Run'))
+    ]
+    certificates_data = instructor_analytics.basic.issued_certificates(course_key, query_features)
+    if csv_required.lower() == 'true':
+        __, data_rows = instructor_analytics.csvs.format_dictlist(certificates_data, query_features)
+        return instructor_analytics.csvs.create_csv_response(
+            'issued_certificates.csv',
+            [col_header for __, col_header in query_features_names],
+            data_rows
+        )
+    else:
+        response_payload = {
+            'certificates': certificates_data,
+            'queried_features': query_features,
+            'feature_names': dict(query_features_names)
+        }
+        return JsonResponse(response_payload)
+
+
+@ensure_csrf_cookie
+@cache_control(no_cache=True, no_store=True, must_revalidate=True)
+@require_level('staff')
 def get_students_features(request, course_id, csv=False):  # pylint: disable=redefined-outer-name
     """
     Respond with json which contains a summary of all enrolled students profile information.
@@ -1093,6 +1180,10 @@ def get_students_features(request, course_id, csv=False):  # pylint: disable=red
         query_features.append('cohort')
         query_features_names['cohort'] = _('Cohort')
 
+    if course.teams_enabled:
+        query_features.append('team')
+        query_features_names['team'] = _('Team')
+
     if not csv:
         student_data = instructor_analytics.basic.enrolled_students_features(course_key, query_features)
         response_payload = {
@@ -1107,10 +1198,14 @@ def get_students_features(request, course_id, csv=False):  # pylint: disable=red
     else:
         try:
             instructor_task.api.submit_calculate_students_features_csv(request, course_key, query_features)
-            success_status = _("Your enrolled student profile report is being generated! You can view the status of the generation task in the 'Pending Instructor Tasks' section.")
+            success_status = _("The enrolled learner profile report is being created."
+                               " To view the status of the report, see Pending Instructor Tasks below.")
             return JsonResponse({"status": success_status})
         except AlreadyRunningError:
-            already_running_status = _("An enrolled student profile report generation task is already in progress. Check the 'Pending Instructor Tasks' table for the status of the task. When completed, the report will be available for download in the table below.")
+            already_running_status = _(
+                "This enrollment report is currently being created."
+                " To view the status of the report, see Pending Instructor Tasks below."
+                " You will be able to download the report when it is complete.")
             return JsonResponse({"status": already_running_status})
 
 
@@ -1131,15 +1226,16 @@ def get_students_who_may_enroll(request, course_id):
     try:
         instructor_task.api.submit_calculate_may_enroll_csv(request, course_key, query_features)
         success_status = _(
-            "Your students who may enroll report is being generated! "
-            "You can view the status of the generation task in the 'Pending Instructor Tasks' section."
+            "The enrollment report is being created. This report contains"
+            " information about learners who can enroll in the course."
+            " To view the status of the report, see Pending Instructor Tasks below."
         )
         return JsonResponse({"status": success_status})
     except AlreadyRunningError:
         already_running_status = _(
-            "A students who may enroll report generation task is already in progress. "
-            "Check the 'Pending Instructor Tasks' table for the status of the task. "
-            "When completed, the report will be available for download in the table below."
+            "This enrollment report is currently being created."
+            " To view the status of the report, see Pending Instructor Tasks below."
+            " You will be able to download the report when it is complete."
         )
         return JsonResponse({"status": already_running_status})
 
@@ -1229,13 +1325,13 @@ def get_enrollment_report(request, course_id):
     course_key = SlashSeparatedCourseKey.from_deprecated_string(course_id)
     try:
         instructor_task.api.submit_detailed_enrollment_features_csv(request, course_key)
-        success_status = _("Your detailed enrollment report is being generated! "
-                           "You can view the status of the generation task in the 'Pending Instructor Tasks' section.")
+        success_status = _("The detailed enrollment report is being created."
+                           " To view the status of the report, see Pending Instructor Tasks below.")
         return JsonResponse({"status": success_status})
     except AlreadyRunningError:
-        already_running_status = _("A detailed enrollment report generation task is already in progress. "
-                                   "Check the 'Pending Instructor Tasks' table for the status of the task. "
-                                   "When completed, the report will be available for download in the table below.")
+        already_running_status = _("The detailed enrollment report is being created."
+                                   " To view the status of the report, see Pending Instructor Tasks below."
+                                   " You will be able to download the report when it is complete.")
         return JsonResponse({
             "status": already_running_status
         })
@@ -1252,14 +1348,69 @@ def get_exec_summary_report(request, course_id):
     course_key = SlashSeparatedCourseKey.from_deprecated_string(course_id)
     try:
         instructor_task.api.submit_executive_summary_report(request, course_key)
-        status_response = _("Your executive summary report is being created. "
-                            "To view the status of the report, see the 'Pending Instructor Tasks' section.")
+        status_response = _("The executive summary report is being created."
+                            " To view the status of the report, see Pending Instructor Tasks below.")
     except AlreadyRunningError:
         status_response = _(
-            "An executive summary report is currently in progress. "
-            "To view the status of the report, see the 'Pending Instructor Tasks' section. "
-            "When completed, the report will be available for download in the table below. "
-            "You will be able to download the report when it is complete."
+            "The executive summary report is currently being created."
+            " To view the status of the report, see Pending Instructor Tasks below."
+            " You will be able to download the report when it is complete."
+        )
+    return JsonResponse({
+        "status": status_response
+    })
+
+
+@ensure_csrf_cookie
+@cache_control(no_cache=True, no_store=True, must_revalidate=True)
+@require_level('staff')
+def get_course_survey_results(request, course_id):
+    """
+    get the survey results report for the particular course.
+    """
+    course_key = SlashSeparatedCourseKey.from_deprecated_string(course_id)
+    try:
+        instructor_task.api.submit_course_survey_report(request, course_key)
+        status_response = _("The survey report is being created."
+                            " To view the status of the report, see Pending Instructor Tasks below.")
+    except AlreadyRunningError:
+        status_response = _(
+            "The survey report is currently being created."
+            " To view the status of the report, see Pending Instructor Tasks below."
+            " You will be able to download the report when it is complete."
+        )
+    return JsonResponse({
+        "status": status_response
+    })
+
+
+@ensure_csrf_cookie
+@cache_control(no_cache=True, no_store=True, must_revalidate=True)
+@require_level('staff')
+def get_proctored_exam_results(request, course_id):
+    """
+    get the proctored exam resultsreport for the particular course.
+    """
+    query_features = [
+        'user_email',
+        'exam_name',
+        'allowed_time_limit_mins',
+        'is_sample_attempt',
+        'started_at',
+        'completed_at',
+        'status',
+    ]
+
+    course_key = CourseKey.from_string(course_id)
+    try:
+        instructor_task.api.submit_proctored_exam_results_report(request, course_key, query_features)
+        status_response = _("The proctored exam results report is being created."
+                            " To view the status of the report, see Pending Instructor Tasks below.")
+    except AlreadyRunningError:
+        status_response = _(
+            "The proctored exam results report is currently being created."
+            " To view the status of the report, see Pending Instructor Tasks below."
+            " You will be able to download the report when it is complete."
         )
     return JsonResponse({
         "status": status_response
@@ -1635,56 +1786,6 @@ def get_anon_ids(request, course_id):  # pylint: disable=unused-argument
     header = ['User ID', 'Anonymized User ID', 'Course Specific Anonymized User ID']
     rows = [[s.id, unique_id_for_user(s, save=False), anonymous_id_for_user(s, course_id, save=False)] for s in students]
     return csv_response(course_id.to_deprecated_string().replace('/', '-') + '-anon-ids.csv', header, rows)
-
-
-@ensure_csrf_cookie
-@cache_control(no_cache=True, no_store=True, must_revalidate=True)
-@require_level('staff')
-def get_distribution(request, course_id):
-    """
-    Respond with json of the distribution of students over selected features which have choices.
-
-    Ask for a feature through the `feature` query parameter.
-    If no `feature` is supplied, will return response with an
-        empty response['feature_results'] object.
-    A list of available will be available in the response['available_features']
-    """
-    course_id = SlashSeparatedCourseKey.from_deprecated_string(course_id)
-    feature = request.GET.get('feature')
-    # alternate notations of None
-    if feature in (None, 'null', ''):
-        feature = None
-    else:
-        feature = str(feature)
-
-    available_features = instructor_analytics.distributions.AVAILABLE_PROFILE_FEATURES
-    # allow None so that requests for no feature can list available features
-    if feature not in available_features + (None,):
-        return HttpResponseBadRequest(strip_tags(
-            "feature '{}' not available.".format(feature)
-        ))
-
-    response_payload = {
-        'course_id': course_id.to_deprecated_string(),
-        'queried_feature': feature,
-        'available_features': available_features,
-        'feature_display_names': instructor_analytics.distributions.DISPLAY_NAMES,
-    }
-
-    p_dist = None
-    if feature is not None:
-        p_dist = instructor_analytics.distributions.profile_distribution(course_id, feature)
-        response_payload['feature_results'] = {
-            'feature': p_dist.feature,
-            'feature_display_name': p_dist.feature_display_name,
-            'data': p_dist.data,
-            'type': p_dist.type,
-        }
-
-        if p_dist.type == 'EASY_CHOICE':
-            response_payload['feature_results']['choices_display_names'] = p_dist.choices_display_names
-
-    return JsonResponse(response_payload)
 
 
 @ensure_csrf_cookie
@@ -2133,13 +2234,13 @@ def calculate_grades_csv(request, course_id):
     course_key = SlashSeparatedCourseKey.from_deprecated_string(course_id)
     try:
         instructor_task.api.submit_calculate_grades_csv(request, course_key)
-        success_status = _("Your grade report is being generated! "
-                           "You can view the status of the generation task in the 'Pending Instructor Tasks' section.")
+        success_status = _("The grade report is being created."
+                           " To view the status of the report, see Pending Instructor Tasks below.")
         return JsonResponse({"status": success_status})
     except AlreadyRunningError:
-        already_running_status = _("A grade report generation task is already in progress. "
-                                   "Check the 'Pending Instructor Tasks' table for the status of the task. "
-                                   "When completed, the report will be available for download in the table below.")
+        already_running_status = _("The grade report is currently being created."
+                                   " To view the status of the report, see Pending Instructor Tasks below."
+                                   " You will be able to download the report when it is complete.")
         return JsonResponse({
             "status": already_running_status
         })
@@ -2159,13 +2260,13 @@ def problem_grade_report(request, course_id):
     course_key = SlashSeparatedCourseKey.from_deprecated_string(course_id)
     try:
         instructor_task.api.submit_problem_grade_report(request, course_key)
-        success_status = _("Your problem grade report is being generated! "
-                           "You can view the status of the generation task in the 'Pending Instructor Tasks' section.")
+        success_status = _("The problem grade report is being created."
+                           " To view the status of the report, see Pending Instructor Tasks below.")
         return JsonResponse({"status": success_status})
     except AlreadyRunningError:
-        already_running_status = _("A problem grade report is already being generated. "
-                                   "Check the 'Pending Instructor Tasks' table for the status of the task. "
-                                   "When completed, the report will be available for download in the table below.")
+        already_running_status = _("A problem grade report is already being generated."
+                                   " To view the status of the report, see Pending Instructor Tasks below."
+                                   " You will be able to download the report when it is complete.")
         return JsonResponse({
             "status": already_running_status
         })
@@ -2347,62 +2448,6 @@ def update_forum_role_membership(request, course_id):
         'action': action,
     }
     return JsonResponse(response_payload)
-
-
-@ensure_csrf_cookie
-@cache_control(no_cache=True, no_store=True, must_revalidate=True)
-@require_level('staff')
-@require_query_params(
-    aname="name of analytic to query",
-)
-@common_exceptions_400
-def proxy_legacy_analytics(request, course_id):
-    """
-    Proxies to the analytics cron job server.
-
-    `aname` is a query parameter specifying which analytic to query.
-    """
-    course_id = SlashSeparatedCourseKey.from_deprecated_string(course_id)
-    analytics_name = request.GET.get('aname')
-
-    # abort if misconfigured
-    if not (hasattr(settings, 'ANALYTICS_SERVER_URL') and
-            hasattr(settings, 'ANALYTICS_API_KEY') and
-            settings.ANALYTICS_SERVER_URL and settings.ANALYTICS_API_KEY):
-        return HttpResponse("Analytics service not configured.", status=501)
-
-    url = "{}get?aname={}&course_id={}&apikey={}".format(
-        settings.ANALYTICS_SERVER_URL,
-        analytics_name,
-        urllib.quote(unicode(course_id)),
-        settings.ANALYTICS_API_KEY,
-    )
-
-    try:
-        res = requests.get(url)
-    except Exception:  # pylint: disable=broad-except
-        log.exception(u"Error requesting from analytics server at %s", url)
-        return HttpResponse("Error requesting from analytics server.", status=500)
-
-    if res.status_code is 200:
-        payload = json.loads(res.content)
-        add_block_ids(payload)
-        content = json.dumps(payload)
-        # return the successful request content
-        return HttpResponse(content, content_type="application/json")
-    elif res.status_code is 404:
-        # forward the 404 and content
-        return HttpResponse(res.content, content_type="application/json", status=404)
-    else:
-        # 500 on all other unexpected status codes.
-        log.error(
-            u"Error fetching %s, code: %s, msg: %s",
-            url, res.status_code, res.content
-        )
-        return HttpResponse(
-            "Error from analytics server ({}).".format(res.status_code),
-            status=500
-        )
 
 
 @require_POST
@@ -2661,3 +2706,100 @@ def start_certificate_generation(request, course_id):
         'task_id': task.task_id
     }
     return JsonResponse(response_payload)
+
+
+@ensure_csrf_cookie
+@cache_control(no_cache=True, no_store=True, must_revalidate=True)
+@require_global_staff
+@require_POST
+def create_certificate_exception(request, course_id, white_list_student=None):
+    """
+    Add Students to certificate white list.
+    """
+    course_key = CourseKey.from_string(course_id)
+
+    try:
+        certificate_white_list = json.loads(request.body)
+    except ValueError:
+        return JsonResponse({
+            'success': False,
+            'message': _('Invalid Json data')
+        }, status=400)
+    try:
+        certificate_white_list, students = process_certificate_exceptions(certificate_white_list, course_key)
+    except ValueError as error:
+        return JsonResponse(
+            {'success': False, 'message': error.message, 'data': json.dumps(certificate_white_list)},
+            status=400
+        )
+
+    if white_list_student == 'all':
+        # Generate Certificates for all white listed students
+        students = User.objects.filter(
+            certificatewhitelist__course_id=course_key,
+            certificatewhitelist__whitelist=True
+        )
+
+    if students:
+        # generate certificates for students if 'students' list is not empty
+        instructor_task.api.generate_certificates_for_students(request, course_key, students=students)
+
+    response_payload = {
+        'success': True,
+        'message': _('Students added to Certificate white list successfully'),
+        'data': json.dumps(certificate_white_list)
+    }
+
+    return JsonResponse(response_payload)
+
+
+def process_certificate_exceptions(data_list, course_key):
+    """
+    Validate user data for certificate exceptions, raise ValueError in case of invalid data and create
+    'CertificateWhitelist' record for students in data_list.
+
+    return updated data_list after creating 'CertificateWhitelist' records in db.
+    """
+    students = []
+    users = [data.get('user_name', False) or data.get('user_email', False) for data in data_list]
+
+    if not all(users):
+        # Username and email can not both be empty
+        raise ValueError(_('Student username/email is required.'))
+
+    if len(users) != len(set(users)):
+        # Duplicate Student username/email is not allowed
+        raise ValueError(_('Duplicate Student Username/password.'))
+
+    for data in data_list:
+        user = data.get('user_name', '') or data.get('user_email', '')
+        try:
+            db_user = get_user_by_username_or_email(user)
+        except ObjectDoesNotExist:
+            raise ValueError(_('Student (username/email={user}) does not exist').format(user=user))
+        except MultipleObjectsReturned:
+            raise ValueError(_('Multiple Students found with username/email={user}').format(user=user))
+
+        if CertificateWhitelist.objects.filter(user=db_user, course_id=course_key, whitelist=True).count() > 0:
+            raise ValueError(
+                _("Student (username/email={user_id} already in certificate exception  list)").format(user_id=user)
+            )
+
+        certificate_white_list = CertificateWhitelist.objects.create(
+            user=db_user,
+            course_id=course_key,
+            whitelist=True,
+            notes=data.get('notes', '')
+        )
+
+        data.update({
+            'id': certificate_white_list.id,
+            'user_email': db_user.email,
+            'user_name': db_user.username,
+            'user_id': db_user.id,
+            'created': certificate_white_list.created.strftime("%A, %B %d, %Y"),
+        })
+
+        students.append(db_user)
+
+    return data_list, students

@@ -4,6 +4,7 @@ running state of a course.
 
 """
 import json
+import re
 from collections import OrderedDict
 from datetime import datetime
 from django.conf import settings
@@ -28,9 +29,11 @@ from shoppingcart.models import (
     PaidCourseRegistration, CourseRegCodeItem, InvoiceTransaction,
     Invoice, CouponRedemption, RegistrationCodeRedemption, CourseRegistrationCode
 )
+from survey.models import SurveyAnswer
 
 from track.views import task_track
 from util.file import course_filename_prefix_generator, UniversalNewlineIterator
+from xblock.runtime import KvsFieldData
 from xmodule.modulestore.django import modulestore
 from xmodule.split_test_module import get_split_user_partitions
 from django.utils.translation import ugettext as _
@@ -43,9 +46,14 @@ from certificates.api import generate_user_certificates
 from courseware.courses import get_course_by_id, get_problems_in_section
 from courseware.grades import iterate_grades_for
 from courseware.models import StudentModule
-from courseware.model_data import FieldDataCache
+from courseware.model_data import DjangoKeyValueStore, FieldDataCache
 from courseware.module_render import get_module_for_descriptor_internal
-from instructor_analytics.basic import enrolled_students_features, list_may_enroll
+from instructor_analytics.basic import (
+    enrolled_students_features,
+    get_proctored_exam_results,
+    list_may_enroll,
+    list_problem_responses
+)
 from instructor_analytics.csvs import format_dictlist
 from instructor_task.models import ReportStore, InstructorTask, PROGRESS
 from lms.djangoapps.lms_xblock.runtime import LmsPartitionService
@@ -55,8 +63,8 @@ from openedx.core.djangoapps.content.course_structures.models import CourseStruc
 from opaque_keys.edx.keys import UsageKey
 from openedx.core.djangoapps.course_groups.cohorts import add_user_to_cohort, is_course_cohorted
 from student.models import CourseEnrollment, CourseAccessRole
+from teams.models import CourseTeamMembership
 from verify_student.models import SoftwareSecurePhotoVerification
-from util.query import use_read_replica_if_available
 
 # define different loggers for use within tasks and on client side
 TASK_LOG = logging.getLogger('edx.celery.task')
@@ -422,6 +430,7 @@ def _get_module_instance_for_task(course_id, student, module_descriptor, xmodule
     """
     # reconstitute the problem's corresponding XModule:
     field_data_cache = FieldDataCache.cache_for_descriptor_descendents(course_id, student, module_descriptor)
+    student_data = KvsFieldData(DjangoKeyValueStore(field_data_cache))
 
     # get request-related tracking information from args passthrough, and supplement with task-specific
     # information:
@@ -444,7 +453,7 @@ def _get_module_instance_for_task(course_id, student, module_descriptor, xmodule
     return get_module_for_descriptor_internal(
         user=student,
         descriptor=module_descriptor,
-        field_data_cache=field_data_cache,
+        student_data=student_data,
         course_id=course_id,
         track_function=make_track_function(),
         xqueue_callback_url_prefix=xqueue_callback_url_prefix,
@@ -674,7 +683,9 @@ def upload_grades_csv(_xmodule_instance_args, _entry_id, course_id, _task_input,
 
     course = get_course_by_id(course_id)
     course_is_cohorted = is_course_cohorted(course.id)
+    teams_enabled = course.teams_enabled
     cohorts_header = ['Cohort Name'] if course_is_cohorted else []
+    teams_header = ['Team Name'] if teams_enabled else []
 
     experiment_partitions = get_split_user_partitions(course.user_partitions)
     group_configs_header = [u'Experiment Group ({})'.format(partition.name) for partition in experiment_partitions]
@@ -696,6 +707,7 @@ def upload_grades_csv(_xmodule_instance_args, _entry_id, course_id, _task_input,
         task_info_string,
         action_name,
         current_step,
+
         total_enrolled_students
     )
     for student, gradeset, err_msg in iterate_grades_for(course_id, enrolled_students):
@@ -723,7 +735,8 @@ def upload_grades_csv(_xmodule_instance_args, _entry_id, course_id, _task_input,
                 header = [section['label'] for section in gradeset[u'section_breakdown']]
                 rows.append(
                     ["id", "email", "username", "grade"] + header + cohorts_header +
-                    group_configs_header + ['Enrollment Track', 'Verification Status'] + certificate_info_header
+                    group_configs_header + teams_header +
+                    ['Enrollment Track', 'Verification Status'] + certificate_info_header
                 )
 
             percents = {
@@ -741,6 +754,14 @@ def upload_grades_csv(_xmodule_instance_args, _entry_id, course_id, _task_input,
             for partition in experiment_partitions:
                 group = LmsPartitionService(student, course_id).get_group(partition, assign=False)
                 group_configs_group_names.append(group.name if group else '')
+
+            team_name = []
+            if teams_enabled:
+                try:
+                    membership = CourseTeamMembership.objects.get(user=student, team__course_id=course_id)
+                    team_name.append(membership.team.name)
+                except CourseTeamMembership.DoesNotExist:
+                    team_name.append('')
 
             enrollment_mode = CourseEnrollment.enrollment_mode_for_user(student, course_id)[0]
             verification_status = SoftwareSecurePhotoVerification.verification_status_for_user(
@@ -764,7 +785,7 @@ def upload_grades_csv(_xmodule_instance_args, _entry_id, course_id, _task_input,
             row_percents = [percents.get(label, 0.0) for label in header]
             rows.append(
                 [student.id, student.email, student.username, gradeset['percent']] +
-                row_percents + cohorts_group_name + group_configs_group_names +
+                row_percents + cohorts_group_name + group_configs_group_names + team_name +
                 [enrollment_mode] + [verification_status] + certificate_info
             )
         else:
@@ -846,6 +867,40 @@ def _order_problems(blocks):
                 problems[problem] = [header_name + " (Earned)", header_name + " (Possible)"]
 
     return problems
+
+
+def upload_problem_responses_csv(_xmodule_instance_args, _entry_id, course_id, task_input, action_name):
+    """
+    For a given `course_id`, generate a CSV file containing
+    all student answers to a given problem, and store using a `ReportStore`.
+    """
+    start_time = time()
+    start_date = datetime.now(UTC)
+    num_reports = 1
+    task_progress = TaskProgress(action_name, num_reports, start_time)
+    current_step = {'step': 'Calculating students answers to problem'}
+    task_progress.update_task_state(extra_meta=current_step)
+
+    # Compute result table and format it
+    problem_location = task_input.get('problem_location')
+    student_data = list_problem_responses(course_id, problem_location)
+    features = ['username', 'state']
+    header, rows = format_dictlist(student_data, features)
+
+    task_progress.attempted = task_progress.succeeded = len(rows)
+    task_progress.skipped = task_progress.total - task_progress.attempted
+
+    rows.insert(0, header)
+
+    current_step = {'step': 'Uploading CSV'}
+    task_progress.update_task_state(extra_meta=current_step)
+
+    # Perform the upload
+    problem_location = re.sub(r'[:/]', '_', problem_location)
+    csv_name = 'student_state_from_{}'.format(problem_location)
+    upload_csv_to_report_store(rows, csv_name, course_id, start_date)
+
+    return task_progress.update_task_state(extra_meta=current_step)
 
 
 def upload_problem_grade_report(_xmodule_instance_args, _entry_id, course_id, _task_input, action_name):
@@ -1190,7 +1245,7 @@ def get_executive_report(course_id):
     }
 
 
-def upload_exec_summary_report(_xmodule_instance_args, _entry_id, course_id, _task_input, action_name):  # pylint: disable=too-many-statements
+def upload_exec_summary_report(_xmodule_instance_args, _entry_id, course_id, _task_input, action_name):  # pylint: disable=invalid-name
     """
     For a given `course_id`, generate a html report containing information,
     which provides a snapshot of how the course is doing.
@@ -1253,14 +1308,109 @@ def upload_exec_summary_report(_xmodule_instance_args, _entry_id, course_id, _ta
     return task_progress.update_task_state(extra_meta=current_step)
 
 
+def upload_course_survey_report(_xmodule_instance_args, _entry_id, course_id, _task_input, action_name):  # pylint: disable=invalid-name
+    """
+    For a given `course_id`, generate a html report containing the survey results for a course.
+    """
+    start_time = time()
+    start_date = datetime.now(UTC)
+    num_reports = 1
+    task_progress = TaskProgress(action_name, num_reports, start_time)
+
+    current_step = {'step': 'Gathering course survey report information'}
+    task_progress.update_task_state(extra_meta=current_step)
+
+    distinct_survey_fields_queryset = SurveyAnswer.objects.filter(course_key=course_id).values('field_name').distinct()
+    survey_fields = []
+    for unique_field_row in distinct_survey_fields_queryset:
+        survey_fields.append(unique_field_row['field_name'])
+    survey_fields.sort()
+
+    user_survey_answers = OrderedDict()
+    survey_answers_for_course = SurveyAnswer.objects.filter(course_key=course_id).select_related('user')
+
+    for survey_field_record in survey_answers_for_course:
+        user_id = survey_field_record.user.id
+        if user_id not in user_survey_answers.keys():
+            user_survey_answers[user_id] = {
+                'username': survey_field_record.user.username,
+                'email': survey_field_record.user.email
+            }
+
+        user_survey_answers[user_id][survey_field_record.field_name] = survey_field_record.field_value
+
+    header = ["User ID", "User Name", "Email"]
+    header.extend(survey_fields)
+    csv_rows = []
+
+    for user_id in user_survey_answers.keys():
+        row = []
+        row.append(user_id)
+        row.append(user_survey_answers[user_id].get('username', ''))
+        row.append(user_survey_answers[user_id].get('email', ''))
+        for survey_field in survey_fields:
+            row.append(user_survey_answers[user_id].get(survey_field, ''))
+        csv_rows.append(row)
+
+    task_progress.attempted = task_progress.succeeded = len(csv_rows)
+    task_progress.skipped = task_progress.total - task_progress.attempted
+
+    csv_rows.insert(0, header)
+
+    current_step = {'step': 'Uploading CSV'}
+    task_progress.update_task_state(extra_meta=current_step)
+
+    # Perform the upload
+    upload_csv_to_report_store(csv_rows, 'course_survey_results', course_id, start_date)
+
+    return task_progress.update_task_state(extra_meta=current_step)
+
+
+def upload_proctored_exam_results_report(_xmodule_instance_args, _entry_id, course_id, _task_input, action_name):  # pylint: disable=invalid-name
+    """
+    For a given `course_id`, generate a CSV file containing
+    information about proctored exam results, and store using a `ReportStore`.
+    """
+    start_time = time()
+    start_date = datetime.now(UTC)
+    num_reports = 1
+    task_progress = TaskProgress(action_name, num_reports, start_time)
+    current_step = {'step': 'Calculating info about proctored exam results in a course'}
+    task_progress.update_task_state(extra_meta=current_step)
+
+    # Compute result table and format it
+    query_features = _task_input.get('features')
+    student_data = get_proctored_exam_results(course_id, query_features)
+    header, rows = format_dictlist(student_data, query_features)
+
+    task_progress.attempted = task_progress.succeeded = len(rows)
+    task_progress.skipped = task_progress.total - task_progress.attempted
+
+    rows.insert(0, header)
+
+    current_step = {'step': 'Uploading CSV'}
+    task_progress.update_task_state(extra_meta=current_step)
+
+    # Perform the upload
+    upload_csv_to_report_store(rows, 'proctored_exam_results_report', course_id, start_date)
+
+    return task_progress.update_task_state(extra_meta=current_step)
+
+
 def generate_students_certificates(
         _xmodule_instance_args, _entry_id, course_id, task_input, action_name):  # pylint: disable=unused-argument
     """
-    For a given `course_id`, generate certificates for all students
-    that are enrolled.
+    For a given `course_id`, generate certificates for only students present in 'students' key in task_input
+    json column, otherwise generate certificates for all enrolled students.
     """
     start_time = time()
-    enrolled_students = use_read_replica_if_available(CourseEnrollment.objects.users_enrolled_in(course_id))
+    enrolled_students = CourseEnrollment.objects.users_enrolled_in(course_id)
+
+    students = task_input.get('students', None)
+
+    if students is not None:
+        enrolled_students = enrolled_students.filter(id__in=students)
+
     task_progress = TaskProgress(action_name, enrolled_students.count(), start_time)
 
     current_step = {'step': 'Calculating students already have certificates'}
@@ -1344,8 +1494,7 @@ def cohort_students_and_upload(_xmodule_instance_args, _entry_id, course_id, tas
                 continue
 
             try:
-                with transaction.commit_on_success():
-                    add_user_to_cohort(cohorts_status[cohort_name]['cohort'], username_or_email)
+                add_user_to_cohort(cohorts_status[cohort_name]['cohort'], username_or_email)
                 cohorts_status[cohort_name]['Students Added'] += 1
                 task_progress.succeeded += 1
             except User.DoesNotExist:
@@ -1384,7 +1533,7 @@ def students_require_certificate(course_id, enrolled_students):
     :param enrolled_students:
     """
     # compute those students where certificates already generated
-    students_already_have_certs = use_read_replica_if_available(User.objects.filter(
+    students_already_have_certs = User.objects.filter(
         ~Q(generatedcertificate__status=CertificateStatuses.unavailable),
-        generatedcertificate__course_id=course_id))
+        generatedcertificate__course_id=course_id)
     return list(set(enrolled_students) - set(students_already_have_certs))

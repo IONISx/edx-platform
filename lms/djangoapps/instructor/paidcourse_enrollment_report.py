@@ -24,7 +24,7 @@ class PaidCourseEnrollmentReportProvider(BaseAbstractEnrollmentReportProvider):
         Returns the User Enrollment information.
         """
         course = get_course_by_id(course_id, depth=0)
-        is_course_staff = has_access(user, 'staff', course)
+        is_course_staff = bool(has_access(user, 'staff', course))
 
         # check the user enrollment role
         if user.is_staff:
@@ -59,8 +59,8 @@ class PaidCourseEnrollmentReportProvider(BaseAbstractEnrollmentReportProvider):
                 manual_enrollment = ManualEnrollmentAudit.get_manual_enrollment(course_enrollment)
                 if manual_enrollment is not None:
                     enrollment_source = _(
-                        'manually enrolled by user_id {user_id}, enrollment state transition: {transition}'
-                    ).format(user_id=manual_enrollment.enrolled_by_id, transition=manual_enrollment.state_transition)
+                        'manually enrolled by {username} - reason: {reason}'
+                    ).format(username=manual_enrollment.enrolled_by.username, reason=manual_enrollment.reason)
                 else:
                     enrollment_source = _('Manually Enrolled')
 

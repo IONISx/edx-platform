@@ -15,16 +15,17 @@ _SETTINGS_MAP = {
     'MIDDLEWARE_CLASSES': _ORIGINAL_MIDDLEWARE_CLASSES,
     'TEMPLATE_CONTEXT_PROCESSORS': _ORIGINAL_TEMPLATE_CONTEXT_PROCESSORS,
     'FEATURES': {},
+    'IONISX_AUTH': None
 }
 
 
 class SettingsUnitTest(testutil.TestCase):
     """Unit tests for settings management code."""
 
-    # Allow access to protected methods (or module-protected methods) under
-    # test. pylint: disable-msg=protected-access
+    # Allow access to protected methods (or module-protected methods) under test.
+    # pylint: disable=protected-access
     # Suppress sprurious no-member warning on fakes.
-    # pylint: disable-msg=no-member
+    # pylint: disable=no-member
 
     def setUp(self):
         super(SettingsUnitTest, self).setUp()

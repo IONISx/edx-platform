@@ -19,7 +19,7 @@ from .common import *
 from openedx.core.lib.logsettings import get_logger_config
 import os
 
-from path import path
+from path import Path as path
 from xmodule.modulestore.modulestore_settings import convert_module_store_setting_if_needed
 
 # SERVICE_VARIANT specifies name of the variant used, which decides what JSON
@@ -146,6 +146,10 @@ SESSION_COOKIE_DOMAIN = ENV_TOKENS.get('SESSION_COOKIE_DOMAIN')
 SESSION_COOKIE_HTTPONLY = ENV_TOKENS.get('SESSION_COOKIE_HTTPONLY', True)
 SESSION_ENGINE = ENV_TOKENS.get('SESSION_ENGINE', SESSION_ENGINE)
 SESSION_COOKIE_SECURE = ENV_TOKENS.get('SESSION_COOKIE_SECURE', SESSION_COOKIE_SECURE)
+SESSION_SAVE_EVERY_REQUEST = ENV_TOKENS.get('SESSION_SAVE_EVERY_REQUEST', SESSION_SAVE_EVERY_REQUEST)
+
+# social sharing settings
+SOCIAL_SHARING_SETTINGS = ENV_TOKENS.get('SOCIAL_SHARING_SETTINGS', SOCIAL_SHARING_SETTINGS)
 
 # allow for environments to specify what cookie name our login subsystem should use
 # this is to fix a bug regarding simultaneous logins between edx.org and edge.edx.org which can
@@ -186,7 +190,7 @@ LANGUAGES = ENV_TOKENS.get('LANGUAGES', LANGUAGES)
 LANGUAGE_CODE = ENV_TOKENS.get('LANGUAGE_CODE', LANGUAGE_CODE)
 USE_I18N = ENV_TOKENS.get('USE_I18N', USE_I18N)
 
-ENV_FEATURES = ENV_TOKENS.get('FEATURES', ENV_TOKENS.get('MITX_FEATURES', {}))
+ENV_FEATURES = ENV_TOKENS.get('FEATURES', {})
 for feature, value in ENV_FEATURES.items():
     FEATURES[feature] = value
 
@@ -205,8 +209,6 @@ LOGGING = get_logger_config(LOG_DIR,
 PLATFORM_NAME = ENV_TOKENS.get('PLATFORM_NAME', 'edX')
 STUDIO_NAME = ENV_TOKENS.get('STUDIO_NAME', 'edX Studio')
 STUDIO_SHORT_NAME = ENV_TOKENS.get('STUDIO_SHORT_NAME', 'Studio')
-TENDER_DOMAIN = ENV_TOKENS.get('TENDER_DOMAIN', TENDER_DOMAIN)
-TENDER_SUBDOMAIN = ENV_TOKENS.get('TENDER_SUBDOMAIN', TENDER_SUBDOMAIN)
 
 # Event Tracking
 if "TRACKING_IGNORE_URL_PATTERNS" in ENV_TOKENS:
@@ -239,15 +241,14 @@ with open(CONFIG_ROOT / CONFIG_PREFIX + "auth.json") as auth_file:
 ############### XBlock filesystem field config ##########
 if 'DJFS' in AUTH_TOKENS and AUTH_TOKENS['DJFS'] is not None:
     DJFS = AUTH_TOKENS['DJFS']
+    if 'url_root' in DJFS:
+        DJFS['url_root'] = DJFS['url_root'].format(platform_revision=EDX_PLATFORM_REVISION)
 
 EMAIL_HOST_USER = AUTH_TOKENS.get('EMAIL_HOST_USER', EMAIL_HOST_USER)
 EMAIL_HOST_PASSWORD = AUTH_TOKENS.get('EMAIL_HOST_PASSWORD', EMAIL_HOST_PASSWORD)
 
-# If Segment.io key specified, load it and turn on Segment.io if the feature flag is set
-# Note that this is the Studio key. There is a separate key for the LMS.
-SEGMENT_IO_KEY = AUTH_TOKENS.get('SEGMENT_IO_KEY')
-if SEGMENT_IO_KEY:
-    FEATURES['SEGMENT_IO'] = ENV_TOKENS.get('SEGMENT_IO', False)
+# Note that this is the Studio key for Segment. There is a separate key for the LMS.
+CMS_SEGMENT_KEY = AUTH_TOKENS.get('SEGMENT_KEY')
 
 AWS_ACCESS_KEY_ID = AUTH_TOKENS["AWS_ACCESS_KEY_ID"]
 if AWS_ACCESS_KEY_ID == "":
@@ -319,6 +320,9 @@ SESSION_INACTIVITY_TIMEOUT_IN_SECONDS = AUTH_TOKENS.get("SESSION_INACTIVITY_TIME
 ##### X-Frame-Options response header settings #####
 X_FRAME_OPTIONS = ENV_TOKENS.get('X_FRAME_OPTIONS', X_FRAME_OPTIONS)
 
+##### IONISx auth configuration
+IONISX_AUTH = AUTH_TOKENS.get('IONISX_AUTH')
+
 ##### Third-party auth options ################################################
 if FEATURES.get('ENABLE_THIRD_PARTY_AUTH'):
     AUTHENTICATION_BACKENDS = (
@@ -326,19 +330,29 @@ if FEATURES.get('ENABLE_THIRD_PARTY_AUTH'):
             'social.backends.google.GoogleOAuth2',
             'social.backends.linkedin.LinkedinOAuth2',
             'social.backends.facebook.FacebookOAuth2',
-            'third_party_auth.saml.SAMLAuthBackend'
+            'third_party_auth.saml.SAMLAuthBackend',
+            'third_party_auth.lti.LTIAuthBackend',
         ]) + list(AUTHENTICATION_BACKENDS)
     )
 
-    MIDDLEWARE_CLASSES += ('third_party_auth.middleware.PortalSynchronizerMiddleware',)
+    if IONISX_AUTH:
+        MIDDLEWARE_CLASSES += ('third_party_auth.middleware.PortalSynchronizerMiddleware',)
 
     # The reduced session expiry time during the third party login pipeline. (Value in seconds)
     SOCIAL_AUTH_PIPELINE_TIMEOUT = ENV_TOKENS.get('SOCIAL_AUTH_PIPELINE_TIMEOUT', 600)
 
+    # Most provider configuration is done via ConfigurationModels but for a few sensitive values
+    # we allow configuration via AUTH_TOKENS instead (optionally).
+    # The SAML private/public key values do not need the delimiter lines (such as
+    # "-----BEGIN PRIVATE KEY-----", "-----END PRIVATE KEY-----" etc.) but they may be included
+    # if you want (though it's easier to format the key values as JSON without the delimiters).
+    SOCIAL_AUTH_SAML_SP_PRIVATE_KEY = AUTH_TOKENS.get('SOCIAL_AUTH_SAML_SP_PRIVATE_KEY', '')
+    SOCIAL_AUTH_SAML_SP_PUBLIC_CERT = AUTH_TOKENS.get('SOCIAL_AUTH_SAML_SP_PUBLIC_CERT', '')
+    SOCIAL_AUTH_OAUTH_SECRETS = AUTH_TOKENS.get('SOCIAL_AUTH_OAUTH_SECRETS', {})
+    SOCIAL_AUTH_LTI_CONSUMER_SECRETS = AUTH_TOKENS.get('SOCIAL_AUTH_LTI_CONSUMER_SECRETS', {})
+
     # third_party_auth config moved to ConfigurationModels. This is for data migration only:
     THIRD_PARTY_AUTH_OLD_CONFIG = AUTH_TOKENS.get('THIRD_PARTY_AUTH', None)
-
-IONISX_AUTH = AUTH_TOKENS.get('IONISX_AUTH')
 
 ##### ADVANCED_SECURITY_CONFIG #####
 ADVANCED_SECURITY_CONFIG = ENV_TOKENS.get('ADVANCED_SECURITY_CONFIG', {})
@@ -371,3 +385,8 @@ if FEATURES['ENABLE_COURSEWARE_INDEX'] or FEATURES['ENABLE_LIBRARY_INDEX']:
 XBLOCK_SETTINGS = ENV_TOKENS.get('XBLOCK_SETTINGS', {})
 XBLOCK_SETTINGS.setdefault("VideoDescriptor", {})["licensing_enabled"] = FEATURES.get("LICENSING", False)
 XBLOCK_SETTINGS.setdefault("VideoModule", {})['YOUTUBE_API_KEY'] = AUTH_TOKENS.get('YOUTUBE_API_KEY', YOUTUBE_API_KEY)
+
+################# PROCTORING CONFIGURATION ##################
+
+PROCTORING_BACKEND_PROVIDER = AUTH_TOKENS.get("PROCTORING_BACKEND_PROVIDER", PROCTORING_BACKEND_PROVIDER)
+PROCTORING_SETTINGS = ENV_TOKENS.get("PROCTORING_SETTINGS", PROCTORING_SETTINGS)

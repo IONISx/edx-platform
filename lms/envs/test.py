@@ -20,7 +20,7 @@ sessions. Assumes structure:
 
 from .common import *
 import os
-from path import path
+from path import Path as path
 from uuid import uuid4
 from warnings import filterwarnings, simplefilter
 
@@ -62,6 +62,8 @@ FEATURES['ENABLE_INSTRUCTOR_LEGACY_DASHBOARD'] = True
 FEATURES['ENABLE_SHOPPING_CART'] = True
 
 FEATURES['ENABLE_VERIFIED_CERTIFICATES'] = True
+
+FEATURES['ENABLE_CREDIT_API'] = True
 
 # Enable this feature for course staff grade downloads, to enable acceptance tests
 FEATURES['ENABLE_S3_GRADE_DOWNLOADS'] = True
@@ -127,6 +129,8 @@ XQUEUE_WAITTIME_BETWEEN_REQUESTS = 5  # seconds
 MOCK_STAFF_GRADING = True
 MOCK_PEER_GRADING = True
 
+############################ STATIC FILES #############################
+
 # TODO (cpennington): We need to figure out how envs/test.py can inject things
 # into common.py so that we don't have to repeat this sort of thing
 STATICFILES_DIRS = [
@@ -144,7 +148,9 @@ STATICFILES_DIRS += [
 # find pipelined assets will raise a ValueError.
 # http://stackoverflow.com/questions/12816941/unit-testing-with-django-pipeline
 STATICFILES_STORAGE = 'pipeline.storage.NonPackagingPipelineStorage'
-PIPELINE_ENABLED = False
+
+# Don't use compression during tests
+PIPELINE_JS_COMPRESSOR = None
 
 update_module_store_settings(
     MODULESTORE,
@@ -213,6 +219,14 @@ CACHES = {
     'course_structure_cache': {
         'BACKEND': 'django.core.cache.backends.dummy.DummyCache',
     },
+    'block_cache': {
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        'LOCATION': 'edx_location_block_cache',
+    },
+    'lms.course_blocks': {
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        'LOCATION': 'edx_location_course_blocks',
+    },
 }
 
 # Dummy secret key for dev
@@ -245,8 +259,10 @@ AUTHENTICATION_BACKENDS = (
     'social.backends.google.GoogleOAuth2',
     'social.backends.linkedin.LinkedinOAuth2',
     'social.backends.facebook.FacebookOAuth2',
+    'social.backends.twitter.TwitterOAuth',
     'third_party_auth.dummy.DummyBackend',
     'third_party_auth.saml.SAMLAuthBackend',
+    'third_party_auth.lti.LTIAuthBackend',
 ) + AUTHENTICATION_BACKENDS
 
 ################################## OPENID #####################################
@@ -265,13 +281,14 @@ OPENID_PROVIDER_TRUSTED_ROOTS = ['*']
 
 ############################## OAUTH2 Provider ################################
 FEATURES['ENABLE_OAUTH2_PROVIDER'] = True
+# don't cache courses for testing
+OIDC_COURSE_HANDLER_CACHE_TIMEOUT = 0
 
 ########################### External REST APIs #################################
 FEATURES['ENABLE_MOBILE_REST_API'] = True
 FEATURES['ENABLE_MOBILE_SOCIAL_FACEBOOK_FEATURES'] = True
 FEATURES['ENABLE_VIDEO_ABSTRACTION_LAYER_API'] = True
 FEATURES['ENABLE_COURSE_BLOCKS_NAVIGATION_API'] = True
-FEATURES['ENABLE_RENDER_XBLOCK_API'] = True
 
 ###################### Payment ##############################3
 # Enable fake payment processing page
@@ -415,6 +432,31 @@ MICROSITE_CONFIGURATION = {
         "ENABLE_PAID_COURSE_REGISTRATION": True,
         "SESSION_COOKIE_DOMAIN": "test_microsite.localhost",
     },
+    "microsite_with_logistration": {
+        "domain_prefix": "logistration",
+        "university": "logistration",
+        "platform_name": "Test logistration",
+        "logo_image_url": "test_microsite/images/header-logo.png",
+        "email_from_address": "test_microsite@edx.org",
+        "payment_support_email": "test_microsite@edx.org",
+        "ENABLE_MKTG_SITE": False,
+        "ENABLE_COMBINED_LOGIN_REGISTRATION": True,
+        "SITE_NAME": "test_microsite.localhost",
+        "course_org_filter": "LogistrationX",
+        "course_about_show_social_links": False,
+        "css_overrides_file": "test_microsite/css/test_microsite.css",
+        "show_partners": False,
+        "show_homepage_promo_video": False,
+        "course_index_overlay_text": "Logistration.",
+        "course_index_overlay_logo_file": "test_microsite/images/header-logo.png",
+        "homepage_overlay_html": "<h1>This is a Logistration HTML</h1>",
+        "ALWAYS_REDIRECT_HOMEPAGE_TO_DASHBOARD_FOR_AUTHENTICATED_USER": False,
+        "COURSE_CATALOG_VISIBILITY_PERMISSION": "see_in_catalog",
+        "COURSE_ABOUT_VISIBILITY_PERMISSION": "see_about_page",
+        "ENABLE_SHOPPING_CART": True,
+        "ENABLE_PAID_COURSE_REGISTRATION": True,
+        "SESSION_COOKIE_DOMAIN": "test_logistration.localhost",
+    },
     "default": {
         "university": "default_university",
         "domain_prefix": "www",
@@ -422,6 +464,7 @@ MICROSITE_CONFIGURATION = {
 }
 MICROSITE_ROOT_DIR = COMMON_ROOT / 'test' / 'test_microsites'
 MICROSITE_TEST_HOSTNAME = 'testmicrosite.testserver'
+MICROSITE_LOGISTRATION_HOSTNAME = 'logistration.testserver'
 
 FEATURES['USE_MICROSITES'] = True
 
@@ -457,7 +500,7 @@ FEATURES['ENABLE_EDXNOTES'] = True
 FEATURES['ENABLE_TEAMS'] = True
 
 # Add milestones to Installed apps for testing
-INSTALLED_APPS += ('milestones', 'openedx.core.djangoapps.call_stack_manager')
+INSTALLED_APPS += ('milestones',)
 
 # Enable courseware search for tests
 FEATURES['ENABLE_COURSEWARE_SEARCH'] = True
@@ -495,8 +538,5 @@ FEATURES['ENABLE_LTI_PROVIDER'] = True
 INSTALLED_APPS += ('lti_provider',)
 AUTHENTICATION_BACKENDS += ('lti_provider.users.LtiBackend',)
 
-# IONISx
-IONISX_AUTH = {
-    'ROOT_URL': 'http://example.com',
-    'LOGOUT_URL': 'http://example.com/logout'
-}
+# ORGANIZATIONS
+FEATURES['ORGANIZATIONS_APP'] = True

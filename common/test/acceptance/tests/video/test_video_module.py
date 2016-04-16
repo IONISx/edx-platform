@@ -384,13 +384,36 @@ class YouTubeVideoTest(VideoBaseTest):
 
         self.assertTrue(self.video.is_video_rendered('html5'))
 
-    def test_video_with_youtube_blocked(self):
+    def test_video_with_youtube_blocked_with_default_response_time(self):
+        """
+        Scenario: Video is rendered in HTML5 mode when the YouTube API is blocked
+        Given the YouTube API is blocked
+        And the course has a Video component in "Youtube_HTML5" mode
+        Then the video has rendered in "HTML5" mode
+        And only one video has rendered
+        """
+        # configure youtube server
+        self.youtube_configuration.update({
+            'youtube_api_blocked': True,
+        })
+
+        self.metadata = self.metadata_for_mode('youtube_html5')
+
+        self.navigate_to_video()
+
+        self.assertTrue(self.video.is_video_rendered('html5'))
+
+        # The video should only be loaded once
+        self.assertEqual(len(self.video.q(css='video')), 1)
+
+    def test_video_with_youtube_blocked_delayed_response_time(self):
         """
         Scenario: Video is rendered in HTML5 mode when the YouTube API is blocked
         Given the YouTube server response time is greater than 1.5 seconds
         And the YouTube API is blocked
         And the course has a Video component in "Youtube_HTML5" mode
         Then the video has rendered in "HTML5" mode
+        And only one video has rendered
         """
         # configure youtube server
         self.youtube_configuration.update({
@@ -403,6 +426,38 @@ class YouTubeVideoTest(VideoBaseTest):
         self.navigate_to_video()
 
         self.assertTrue(self.video.is_video_rendered('html5'))
+
+        # The video should only be loaded once
+        self.assertEqual(len(self.video.q(css='video')), 1)
+
+    def test_html5_video_rendered_with_youtube_captions(self):
+        """
+        Scenario: User should see Youtube captions for If there are no transcripts
+        available for HTML5 mode
+        Given that I have uploaded a .srt.sjson file to assets for Youtube mode
+        And the YouTube API is blocked
+        And the course has a Video component in "Youtube_HTML5" mode
+        And Video component rendered in HTML5 mode
+        And Html5 mode video has no transcripts
+        When I see the captions for HTML5 mode video
+        Then I should see the Youtube captions
+        """
+        self.assets.append('subs__Szu8hVDvgc.srt.sjson')
+        # configure youtube server
+        self.youtube_configuration.update({
+            'time_to_response': 2.0,
+            'youtube_api_blocked': True,
+        })
+
+        data = {'sub': '_Szu8hVDvgc'}
+        self.metadata = self.metadata_for_mode('youtube_html5', additional_data=data)
+
+        self.navigate_to_video()
+
+        self.assertTrue(self.video.is_video_rendered('html5'))
+        # check if caption button is visible
+        self.assertTrue(self.video.is_button_shown('CC'))
+        self._verify_caption_text('Welcome to edX.')
 
     def test_download_transcript_button_works_correctly(self):
         """
@@ -558,13 +613,15 @@ class YouTubeVideoTest(VideoBaseTest):
         # open video "C"
         self.course_nav.go_to_sequential('C')
 
-        # check if video "C" should start playing at speed "0.75"
-        self.assertEqual(self.video.speed, '0.75x')
+        # Since the playback speed was set to .5 in "B", this video will also be impacted
+        # because a playback speed has never explicitly been set for it. However, this video
+        # does not have a .5 playback option, so the closest possible (.75) should be selected.
+        self.video.verify_speed_changed('0.75x')
 
         # open video "A"
         self.course_nav.go_to_sequential('A')
 
-        # check if video "A" should start playing at speed "2.0"
+        # Video "A" should still play at speed 2.0 because it was explicitly set to that.
         self.assertEqual(self.video.speed, '2.0x')
 
         # reload the page
@@ -582,14 +639,15 @@ class YouTubeVideoTest(VideoBaseTest):
         # open video "B"
         self.course_nav.go_to_sequential('B')
 
-        # check if video "B" should start playing at speed "0.50"
+        # Video "B" should still play at speed .5 because it was explicitly set to that.
         self.assertEqual(self.video.speed, '0.50x')
 
         # open video "C"
         self.course_nav.go_to_sequential('C')
 
-        # check if video "C" should start playing at speed "1.0"
-        self.assertEqual(self.video.speed, '1.0x')
+        # The change of speed for Video "A" should  impact Video "C" because it still has
+        # not been explicitly set to a speed.
+        self.video.verify_speed_changed('1.0x')
 
     def test_video_has_correct_transcript(self):
         """
@@ -736,7 +794,7 @@ class YouTubeVideoTest(VideoBaseTest):
             u'video_bumper': {
                 u'value': {
                     "transcripts": {},
-                    "video_id": "edx_video_id"
+                    "video_id": "video_001"
                 }
             }
         }

@@ -3,7 +3,9 @@ Test courseware search
 """
 import os
 import json
+import uuid
 
+from ..helpers import remove_file
 from ...pages.common.logout import LogoutPage
 from ...pages.studio.overview import CourseOutlinePage
 from ...pages.lms.courseware_search import CoursewareSearchPage
@@ -40,6 +42,7 @@ class CoursewareSearchCohortTest(ContainerBase):
         # create test file in which index for this test will live
         with open(self.TEST_INDEX_FILENAME, "w+") as index_file:
             json.dump({}, index_file)
+        self.addCleanup(remove_file, self.TEST_INDEX_FILENAME)
 
         super(CoursewareSearchCohortTest, self).setUp(is_staff=is_staff)
         self.staff_user = self.user
@@ -55,15 +58,15 @@ class CoursewareSearchCohortTest(ContainerBase):
         self.content_group_b = "Content Group B"
 
         # Create a student who will be in "Cohort A"
-        self.cohort_a_student_username = "cohort_a_student"
-        self.cohort_a_student_email = "cohort_a_student@example.com"
+        self.cohort_a_student_username = "cohort_a_" + str(uuid.uuid4().hex)[:12]
+        self.cohort_a_student_email = self.cohort_a_student_username + "@example.com"
         StudioAutoAuthPage(
             self.browser, username=self.cohort_a_student_username, email=self.cohort_a_student_email, no_login=True
         ).visit()
 
         # Create a student who will be in "Cohort B"
-        self.cohort_b_student_username = "cohort_b_student"
-        self.cohort_b_student_email = "cohort_b_student@example.com"
+        self.cohort_b_student_username = "cohort_b_" + str(uuid.uuid4().hex)[:12]
+        self.cohort_b_student_email = self.cohort_b_student_username + "@example.com"
         StudioAutoAuthPage(
             self.browser, username=self.cohort_b_student_username, email=self.cohort_b_student_email, no_login=True
         ).visit()
@@ -78,10 +81,6 @@ class CoursewareSearchCohortTest(ContainerBase):
         self.create_cohorts_and_assign_students()
 
         self._studio_reindex()
-
-    def tearDown(self):
-        super(CoursewareSearchCohortTest, self).tearDown()
-        os.remove(self.TEST_INDEX_FILENAME)
 
     def _auto_auth(self, username, email, staff):
         """

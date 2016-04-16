@@ -23,7 +23,7 @@ from .common import *
 from openedx.core.lib.logsettings import get_logger_config
 import os
 
-from path import path
+from path import Path as path
 from xmodule.modulestore.modulestore_settings import convert_module_store_setting_if_needed
 
 # SERVICE_VARIANT specifies name of the variant used, which decides what JSON
@@ -131,6 +131,9 @@ if STATIC_URL_BASE:
     if not STATIC_URL.endswith("/"):
         STATIC_URL += "/"
 
+# DEFAULT_COURSE_ABOUT_IMAGE_URL specifies the default image to show for courses that don't provide one
+DEFAULT_COURSE_ABOUT_IMAGE_URL = ENV_TOKENS.get('DEFAULT_COURSE_ABOUT_IMAGE_URL', DEFAULT_COURSE_ABOUT_IMAGE_URL)
+
 # MEDIA_ROOT specifies the directory where user-uploaded files are stored.
 MEDIA_ROOT = ENV_TOKENS.get('MEDIA_ROOT', MEDIA_ROOT)
 MEDIA_URL = ENV_TOKENS.get('MEDIA_URL', MEDIA_URL)
@@ -139,6 +142,8 @@ PLATFORM_NAME = ENV_TOKENS.get('PLATFORM_NAME', PLATFORM_NAME)
 # For displaying on the receipt. At Stanford PLATFORM_NAME != MERCHANT_NAME, but PLATFORM_NAME is a fine default
 PLATFORM_TWITTER_ACCOUNT = ENV_TOKENS.get('PLATFORM_TWITTER_ACCOUNT', PLATFORM_TWITTER_ACCOUNT)
 PLATFORM_FACEBOOK_ACCOUNT = ENV_TOKENS.get('PLATFORM_FACEBOOK_ACCOUNT', PLATFORM_FACEBOOK_ACCOUNT)
+
+SOCIAL_SHARING_SETTINGS = ENV_TOKENS.get('SOCIAL_SHARING_SETTINGS', SOCIAL_SHARING_SETTINGS)
 
 # Social media links for the page footer
 SOCIAL_MEDIA_FOOTER_URLS = ENV_TOKENS.get('SOCIAL_MEDIA_FOOTER_URLS', SOCIAL_MEDIA_FOOTER_URLS)
@@ -154,8 +159,10 @@ HTTPS = ENV_TOKENS.get('HTTPS', HTTPS)
 SESSION_ENGINE = ENV_TOKENS.get('SESSION_ENGINE', SESSION_ENGINE)
 SESSION_COOKIE_DOMAIN = ENV_TOKENS.get('SESSION_COOKIE_DOMAIN')
 SESSION_COOKIE_HTTPONLY = ENV_TOKENS.get('SESSION_COOKIE_HTTPONLY', True)
-REGISTRATION_EXTRA_FIELDS = ENV_TOKENS.get('REGISTRATION_EXTRA_FIELDS', REGISTRATION_EXTRA_FIELDS)
 SESSION_COOKIE_SECURE = ENV_TOKENS.get('SESSION_COOKIE_SECURE', SESSION_COOKIE_SECURE)
+SESSION_SAVE_EVERY_REQUEST = ENV_TOKENS.get('SESSION_SAVE_EVERY_REQUEST', SESSION_SAVE_EVERY_REQUEST)
+
+REGISTRATION_EXTRA_FIELDS = ENV_TOKENS.get('REGISTRATION_EXTRA_FIELDS', REGISTRATION_EXTRA_FIELDS)
 
 # Set the names of cookies shared with the marketing site
 # These have the same cookie domain as the session, which in production
@@ -224,6 +231,7 @@ BULK_EMAIL_ROUTING_KEY_SMALL_JOBS = LOW_PRIORITY_QUEUE
 
 # Theme overrides
 THEME_NAME = ENV_TOKENS.get('THEME_NAME', None)
+COMP_THEME_DIR = path(ENV_TOKENS.get('COMP_THEME_DIR', COMP_THEME_DIR))
 
 # Marketing link overrides
 MKTG_URL_LINK_MAP.update(ENV_TOKENS.get('MKTG_URL_LINK_MAP', {}))
@@ -245,7 +253,7 @@ USE_I18N = ENV_TOKENS.get('USE_I18N', USE_I18N)
 for app in ENV_TOKENS.get('ADDL_INSTALLED_APPS', []):
     INSTALLED_APPS += (app,)
 
-ENV_FEATURES = ENV_TOKENS.get('FEATURES', ENV_TOKENS.get('MITX_FEATURES', {}))
+ENV_FEATURES = ENV_TOKENS.get('FEATURES', {})
 for feature, value in ENV_FEATURES.items():
     FEATURES[feature] = value
 
@@ -328,6 +336,10 @@ FOOTER_ORGANIZATION_IMAGE = ENV_TOKENS.get('FOOTER_ORGANIZATION_IMAGE', FOOTER_O
 FOOTER_CACHE_TIMEOUT = ENV_TOKENS.get('FOOTER_CACHE_TIMEOUT', FOOTER_CACHE_TIMEOUT)
 FOOTER_BROWSER_CACHE_MAX_AGE = ENV_TOKENS.get('FOOTER_BROWSER_CACHE_MAX_AGE', FOOTER_BROWSER_CACHE_MAX_AGE)
 
+# Credit notifications settings
+NOTIFICATION_EMAIL_CSS = ENV_TOKENS.get('NOTIFICATION_EMAIL_CSS', NOTIFICATION_EMAIL_CSS)
+NOTIFICATION_EMAIL_EDX_LOGO = ENV_TOKENS.get('NOTIFICATION_EMAIL_EDX_LOGO', NOTIFICATION_EMAIL_EDX_LOGO)
+
 ############# CORS headers for cross-domain requests #################
 
 if FEATURES.get('ENABLE_CORS_HEADERS') or FEATURES.get('ENABLE_CROSS_DOMAIN_CSRF_COOKIE'):
@@ -387,10 +399,7 @@ if 'DJFS' in AUTH_TOKENS and AUTH_TOKENS['DJFS'] is not None:
 HOSTNAME_MODULESTORE_DEFAULT_MAPPINGS = ENV_TOKENS.get('HOSTNAME_MODULESTORE_DEFAULT_MAPPINGS', {})
 
 ############### Mixed Related(Secure/Not-Secure) Items ##########
-# If Segment.io key specified, load it and enable Segment.io if the feature flag is set
-SEGMENT_IO_LMS_KEY = AUTH_TOKENS.get('SEGMENT_IO_LMS_KEY')
-if SEGMENT_IO_LMS_KEY:
-    FEATURES['SEGMENT_IO_LMS'] = ENV_TOKENS.get('SEGMENT_IO_LMS', False)
+LMS_SEGMENT_KEY = AUTH_TOKENS.get('SEGMENT_KEY')
 
 CC_PROCESSOR_NAME = AUTH_TOKENS.get('CC_PROCESSOR_NAME', CC_PROCESSOR_NAME)
 CC_PROCESSOR = AUTH_TOKENS.get('CC_PROCESSOR', CC_PROCESSOR)
@@ -456,6 +465,9 @@ ANALYTICS_DATA_TOKEN = AUTH_TOKENS.get("ANALYTICS_DATA_TOKEN", ANALYTICS_DATA_TO
 # Analytics Dashboard
 ANALYTICS_DASHBOARD_URL = ENV_TOKENS.get("ANALYTICS_DASHBOARD_URL", ANALYTICS_DASHBOARD_URL)
 ANALYTICS_DASHBOARD_NAME = ENV_TOKENS.get("ANALYTICS_DASHBOARD_NAME", PLATFORM_NAME + " Insights")
+
+# Mailchimp New User List
+MAILCHIMP_NEW_USER_LIST_ID = ENV_TOKENS.get("MAILCHIMP_NEW_USER_LIST_ID")
 
 # Zendesk
 ZENDESK_USER = AUTH_TOKENS.get("ZENDESK_USER")
@@ -537,6 +549,9 @@ TIME_ZONE_DISPLAYED_FOR_DEADLINES = ENV_TOKENS.get("TIME_ZONE_DISPLAYED_FOR_DEAD
 ##### X-Frame-Options response header settings #####
 X_FRAME_OPTIONS = ENV_TOKENS.get('X_FRAME_OPTIONS', X_FRAME_OPTIONS)
 
+##### IONISx auth configuration
+IONISX_AUTH = AUTH_TOKENS.get('IONISX_AUTH')
+
 ##### Third-party auth options ################################################
 if FEATURES.get('ENABLE_THIRD_PARTY_AUTH'):
     AUTHENTICATION_BACKENDS = (
@@ -545,13 +560,25 @@ if FEATURES.get('ENABLE_THIRD_PARTY_AUTH'):
             'social.backends.linkedin.LinkedinOAuth2',
             'social.backends.facebook.FacebookOAuth2',
             'third_party_auth.saml.SAMLAuthBackend',
+            'third_party_auth.lti.LTIAuthBackend',
         ]) + list(AUTHENTICATION_BACKENDS)
     )
 
-    MIDDLEWARE_CLASSES += ('third_party_auth.middleware.PortalSynchronizerMiddleware',)
+    if IONISX_AUTH:
+        MIDDLEWARE_CLASSES += ('third_party_auth.middleware.PortalSynchronizerMiddleware',)
 
     # The reduced session expiry time during the third party login pipeline. (Value in seconds)
     SOCIAL_AUTH_PIPELINE_TIMEOUT = ENV_TOKENS.get('SOCIAL_AUTH_PIPELINE_TIMEOUT', 600)
+
+    # Most provider configuration is done via ConfigurationModels but for a few sensitive values
+    # we allow configuration via AUTH_TOKENS instead (optionally).
+    # The SAML private/public key values do not need the delimiter lines (such as
+    # "-----BEGIN PRIVATE KEY-----", "-----END PRIVATE KEY-----" etc.) but they may be included
+    # if you want (though it's easier to format the key values as JSON without the delimiters).
+    SOCIAL_AUTH_SAML_SP_PRIVATE_KEY = AUTH_TOKENS.get('SOCIAL_AUTH_SAML_SP_PRIVATE_KEY', '')
+    SOCIAL_AUTH_SAML_SP_PUBLIC_CERT = AUTH_TOKENS.get('SOCIAL_AUTH_SAML_SP_PUBLIC_CERT', '')
+    SOCIAL_AUTH_OAUTH_SECRETS = AUTH_TOKENS.get('SOCIAL_AUTH_OAUTH_SECRETS', {})
+    SOCIAL_AUTH_LTI_CONSUMER_SECRETS = AUTH_TOKENS.get('SOCIAL_AUTH_LTI_CONSUMER_SECRETS', {})
 
     # third_party_auth config moved to ConfigurationModels. This is for data migration only:
     THIRD_PARTY_AUTH_OLD_CONFIG = AUTH_TOKENS.get('THIRD_PARTY_AUTH', None)
@@ -561,8 +588,6 @@ if FEATURES.get('ENABLE_THIRD_PARTY_AUTH'):
             'task': 'third_party_auth.fetch_saml_metadata',
             'schedule': datetime.timedelta(hours=ENV_TOKENS.get('THIRD_PARTY_AUTH_SAML_FETCH_PERIOD_HOURS', 24)),
         }
-
-IONISX_AUTH = AUTH_TOKENS.get('IONISX_AUTH')
 
 ##### OAUTH2 Provider ##############
 if FEATURES.get('ENABLE_OAUTH2_PROVIDER'):
@@ -618,9 +643,12 @@ PDF_RECEIPT_COBRAND_LOGO_HEIGHT_MM = ENV_TOKENS.get(
 
 if FEATURES.get('ENABLE_COURSEWARE_SEARCH') or \
    FEATURES.get('ENABLE_DASHBOARD_SEARCH') or \
-   FEATURES.get('ENABLE_COURSE_DISCOVERY'):
+   FEATURES.get('ENABLE_COURSE_DISCOVERY') or \
+   FEATURES.get('ENABLE_TEAMS'):
     # Use ElasticSearch as the search engine herein
     SEARCH_ENGINE = "search.elastic.ElasticSearchEngine"
+
+ELASTIC_SEARCH_CONFIG = ENV_TOKENS.get('ELASTIC_SEARCH_CONFIG', [{}])
 
 # Facebook app
 FACEBOOK_API_VERSION = AUTH_TOKENS.get("FACEBOOK_API_VERSION")
@@ -654,13 +682,18 @@ if FEATURES.get('INDIVIDUAL_DUE_DATES'):
         'courseware.student_field_overrides.IndividualStudentOverrideProvider',
     )
 
+##### Self-Paced Course Due Dates #####
+FIELD_OVERRIDE_PROVIDERS += (
+    'courseware.self_paced_overrides.SelfPacedDateOverrideProvider',
+)
+
 # PROFILE IMAGE CONFIG
 PROFILE_IMAGE_BACKEND = ENV_TOKENS.get('PROFILE_IMAGE_BACKEND', PROFILE_IMAGE_BACKEND)
 PROFILE_IMAGE_SECRET_KEY = AUTH_TOKENS.get('PROFILE_IMAGE_SECRET_KEY', PROFILE_IMAGE_SECRET_KEY)
 PROFILE_IMAGE_MAX_BYTES = ENV_TOKENS.get('PROFILE_IMAGE_MAX_BYTES', PROFILE_IMAGE_MAX_BYTES)
 PROFILE_IMAGE_MIN_BYTES = ENV_TOKENS.get('PROFILE_IMAGE_MIN_BYTES', PROFILE_IMAGE_MIN_BYTES)
 if FEATURES['IS_EDX_DOMAIN']:
-    PROFILE_IMAGE_DEFAULT_FILENAME = 'images/edx-theme/default-profile'
+    PROFILE_IMAGE_DEFAULT_FILENAME = 'images/edx-theme/default'
 else:
     PROFILE_IMAGE_DEFAULT_FILENAME = ENV_TOKENS.get('PROFILE_IMAGE_DEFAULT_FILENAME', PROFILE_IMAGE_DEFAULT_FILENAME)
 
@@ -673,10 +706,26 @@ EDXNOTES_INTERNAL_API = ENV_TOKENS.get('EDXNOTES_INTERNAL_API', EDXNOTES_INTERNA
 
 CREDIT_PROVIDER_SECRET_KEYS = AUTH_TOKENS.get("CREDIT_PROVIDER_SECRET_KEYS", {})
 
-############ CERTIFICATE VERIFICATION URL (STATIC FILES) ###########
-ENV_TOKENS.get('CERTIFICATES_STATIC_VERIFY_URL', CERTIFICATES_STATIC_VERIFY_URL)
-
 ##################### LTI Provider #####################
 if FEATURES.get('ENABLE_LTI_PROVIDER'):
     INSTALLED_APPS += ('lti_provider',)
     AUTHENTICATION_BACKENDS += ('lti_provider.users.LtiBackend', )
+
+LTI_USER_EMAIL_DOMAIN = ENV_TOKENS.get('LTI_USER_EMAIL_DOMAIN', 'lti.example.com')
+
+# For more info on this, see the notes in common.py
+LTI_AGGREGATE_SCORE_PASSBACK_DELAY = ENV_TOKENS.get(
+    'LTI_AGGREGATE_SCORE_PASSBACK_DELAY', LTI_AGGREGATE_SCORE_PASSBACK_DELAY
+)
+
+##################### Credit Provider help link ####################
+CREDIT_HELP_LINK_URL = ENV_TOKENS.get('CREDIT_HELP_LINK_URL', CREDIT_HELP_LINK_URL)
+
+#### JWT configuration ####
+JWT_ISSUER = ENV_TOKENS.get('JWT_ISSUER', JWT_ISSUER)
+JWT_EXPIRATION = ENV_TOKENS.get('JWT_EXPIRATION', JWT_EXPIRATION)
+
+################# PROCTORING CONFIGURATION ##################
+
+PROCTORING_BACKEND_PROVIDER = AUTH_TOKENS.get("PROCTORING_BACKEND_PROVIDER", PROCTORING_BACKEND_PROVIDER)
+PROCTORING_SETTINGS = ENV_TOKENS.get("PROCTORING_SETTINGS", PROCTORING_SETTINGS)

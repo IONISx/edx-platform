@@ -33,13 +33,14 @@ import sys
 import os
 import imp
 
-from path import path
+from path import Path as path
 from warnings import simplefilter
 from django.utils.translation import ugettext_lazy as _
 
 from .discussionsettings import *
 import dealer.git
 from xmodule.modulestore.modulestore_settings import update_module_store_settings
+from xmodule.modulestore.edit_info import EditInfoMixin
 from xmodule.mixin import LicenseMixin
 from lms.djangoapps.lms_xblock.mixin import LmsBlockMixin
 
@@ -63,8 +64,6 @@ DISCUSSION_SETTINGS = {
 
 # Features
 FEATURES = {
-    'USE_DJANGO_PIPELINE': True,
-
     'DISPLAY_DEBUG_INFO_TO_STAFF': True,
     'DISPLAY_HISTOGRAMS_TO_STAFF': False,  # For large courses this slows down courseware access for staff.
 
@@ -168,10 +167,6 @@ FEATURES = {
     #   for all Mongo-backed courses.
     'REQUIRE_COURSE_EMAIL_AUTH': True,
 
-    # Analytics experiments - shows instructor analytics tab in LMS instructor dashboard.
-    # Enabling this feature depends on installation of a separate analytics server.
-    'ENABLE_INSTRUCTOR_ANALYTICS': False,
-
     # enable analytics server.
     # WARNING: THIS SHOULD ALWAYS BE SET TO FALSE UNDER NORMAL
     # LMS OPERATION. See analytics.py for details about what
@@ -185,9 +180,6 @@ FEATURES = {
     # Staff Debug tool.
     'ENABLE_STUDENT_HISTORY_VIEW': True,
 
-    # Segment.io for LMS--need to explicitly turn it on for production.
-    'SEGMENT_IO_LMS': False,
-
     # Provide a UI to allow users to submit feedback from the LMS (left-hand help modal)
     'ENABLE_FEEDBACK_SUBMISSION': False,
 
@@ -198,7 +190,7 @@ FEATURES = {
     # Enable URL that shows information about the status of variuous services
     'ENABLE_SERVICE_STATUS': False,
 
-    # Toggle to indicate use of a custom theme
+    # Toggle to indicate use of the Stanford theming system
     'USE_CUSTOM_THEME': False,
 
     # Don't autoplay videos for students
@@ -231,10 +223,6 @@ FEATURES = {
 
     # for load testing
     'AUTOMATIC_AUTH_FOR_TESTING': False,
-
-    # Toggle to enable chat availability (configured on a per-course
-    # basis in Studio)
-    'ENABLE_CHAT': False,
 
     # Allow users to enroll with methods other than just honor code certificates
     'MULTIPLE_ENROLLMENT_ROLES': False,
@@ -322,8 +310,7 @@ FEATURES = {
     'ENABLE_MOBILE_REST_API': False,
     'ENABLE_MOBILE_SOCIAL_FACEBOOK_FEATURES': False,
 
-    # Enable APIs required for xBlocks on Mobile, and supported in general
-    'ENABLE_RENDER_XBLOCK_API': False,
+    # Enable temporary APIs required for xBlocks on Mobile
     'ENABLE_COURSE_BLOCKS_NAVIGATION_API': False,
 
     # Enable the combined login/registration form
@@ -337,10 +324,7 @@ FEATURES = {
     # and register for course.
     'ALLOW_AUTOMATED_SIGNUPS': False,
 
-    # Display demographic data on the analytics tab in the instructor dashboard.
-    'DISPLAY_ANALYTICS_DEMOGRAPHICS': True,
-
-    # Enable display of enrollment counts in instructor and legacy analytics dashboard
+    # Enable display of enrollment counts in instructor dash, analytics section
     'DISPLAY_ANALYTICS_ENROLLMENTS': True,
 
     # Show the mobile app links in the footer
@@ -351,6 +335,9 @@ FEATURES = {
 
     # Milestones application flag
     'MILESTONES_APP': False,
+
+    # Organizations application flag
+    'ORGANIZATIONS_APP': False,
 
     # Prerequisite courses feature flag
     'ENABLE_PREREQUISITE_COURSES': False,
@@ -382,25 +369,17 @@ FEATURES = {
     # Batch-Generated Certificates from Instructor Dashboard
     'CERTIFICATES_INSTRUCTOR_GENERATION': False,
 
-    # Social Media Sharing on Student Dashboard
-    'SOCIAL_SHARING_SETTINGS': {
-        # Note: Ensure 'CUSTOM_COURSE_URLS' has a matching value in cms/envs/common.py
-        'CUSTOM_COURSE_URLS': False,
-        'DASHBOARD_FACEBOOK': False,
-        'CERTIFICATE_FACEBOOK': False,
-        'CERTIFICATE_FACEBOOK_TEXT': None,
-        'DASHBOARD_TWITTER': False,
-        'DASHBOARD_TWITTER_TEXT': None
-    },
-
     # Course discovery feature
     'ENABLE_COURSE_DISCOVERY': False,
+
+    # Setting for overriding default filtering facets for Course discovery
+    # COURSE_DISCOVERY_FILTERS = ["org", "language", "modes"]
 
     # Software secure fake page feature flag
     'ENABLE_SOFTWARE_SECURE_FAKE': False,
 
     # Teams feature
-    'ENABLE_TEAMS': False,
+    'ENABLE_TEAMS': True,
 
     # Show video bumper in LMS
     'ENABLE_VIDEO_BUMPER': False,
@@ -408,14 +387,23 @@ FEATURES = {
     # How many seconds to show the bumper again, default is 7 days:
     'SHOW_BUMPER_PERIODICITY': 7 * 24 * 3600,
 
+    # Special Exams, aka Timed and Proctored Exams
+    'ENABLE_SPECIAL_EXAMS': False,
+
     # Enable OpenBadge support. See the BADGR_* settings later in this file.
     'ENABLE_OPENBADGES': False,
 
     # Credit course API
-    'ENABLE_CREDIT_API': False,
+    'ENABLE_CREDIT_API': True,
 
     # The block types to disable need to be specified in "x block disable config" in django admin.
     'ENABLE_DISABLING_XBLOCK_TYPES': True,
+
+    # Enable the max score cache to speed up grading
+    'ENABLE_MAX_SCORE_CACHE': True,
+
+    # Enable LTI Provider feature.
+    'ENABLE_LTI_PROVIDER': False,
 }
 
 # Ignore static asset files on import which match this pattern
@@ -439,6 +427,9 @@ ENV_ROOT = REPO_ROOT.dirname()  # virtualenv dir /edx-platform is in
 COURSES_ROOT = ENV_ROOT / "data"
 
 DATA_DIR = COURSES_ROOT
+
+# comprehensive theming system
+COMP_THEME_DIR = ""
 
 # TODO: Remove the rest of the sys.path modification here and in cms/envs/common.py
 sys.path.append(REPO_ROOT)
@@ -588,7 +579,7 @@ LMS_MIGRATION_ALLOWED_IPS = []
 # Note: these intentionally greedily grab all chars up to the next slash including any pluses
 # DHM: I really wanted to ensure the separators were the same (+ or /) but all patts I tried had
 # too many inadvertent side effects :-(
-COURSE_KEY_PATTERN = r'(?P<course_key_string>[^/+]+(/|\+)[^/+]+(/|\+)[^/]+)'
+COURSE_KEY_PATTERN = r'(?P<course_key_string>[^/+]+(/|\+)[^/+]+(/|\+)[^/?]+)'
 COURSE_ID_PATTERN = COURSE_KEY_PATTERN.replace('course_key_string', 'course_id')
 COURSE_KEY_REGEX = COURSE_KEY_PATTERN.replace('P<course_key_string>', ':')
 
@@ -598,6 +589,7 @@ USAGE_ID_PATTERN = r'(?P<usage_id>(?:i4x://?[^/]+/[^/]+/[^/]+/[^@]+(?:@[^/]+)?)|
 
 
 ############################## EVENT TRACKING #################################
+LMS_SEGMENT_KEY = None
 
 # FIXME: Should we be doing this truncation?
 TRACK_MAX_EVENT = 50000
@@ -703,7 +695,7 @@ from xmodule.x_module import XModuleMixin
 # These are the Mixins that should be added to every XBlock.
 # This should be moved into an XBlock Runtime/Application object
 # once the responsibility of XBlock creation is moved out of modulestore - cpennington
-XBLOCK_MIXINS = (LmsBlockMixin, InheritanceMixin, XModuleMixin)
+XBLOCK_MIXINS = (LmsBlockMixin, InheritanceMixin, XModuleMixin, EditInfoMixin)
 
 # Allow any XBlock in the LMS
 XBLOCK_SELECT_FUNCTION = prefer_xmodules
@@ -790,6 +782,7 @@ DEBUG = False
 TEMPLATE_DEBUG = False
 USE_TZ = True
 SESSION_COOKIE_SECURE = False
+SESSION_SAVE_EVERY_REQUEST = False
 
 # CMS base
 CMS_BASE = 'localhost:8001'
@@ -835,6 +828,7 @@ STATICFILES_DIRS = [
 ]
 
 FAVICON_PATH = 'images/favicon.ico'
+DEFAULT_COURSE_ABOUT_IMAGE_URL = 'images/pencils.jpg'
 
 # User-uploaded content
 MEDIA_ROOT = '/edx/var/edxapp/media/'
@@ -1097,19 +1091,15 @@ FOOTER_CACHE_TIMEOUT = 30 * 60
 # Max age cache control header for the footer (controls browser caching).
 FOOTER_BROWSER_CACHE_MAX_AGE = 5 * 60
 
+# Credit api notification cache timeout
+CREDIT_NOTIFICATION_CACHE_TIMEOUT = 5 * 60 * 60
+
 ################################# Deprecation warnings #####################
 
 # Ignore deprecation warnings (so we don't clutter Jenkins builds/production)
 simplefilter('ignore')
 
 ################################# Middleware ###################################
-# List of finder classes that know how to find static files in
-# various locations.
-STATICFILES_FINDERS = (
-    'staticfiles.finders.FileSystemFinder',
-    'staticfiles.finders.AppDirectoriesFinder',
-    'pipeline.finders.PipelineFinder',
-)
 
 # List of callables that know how to import templates from various sources.
 TEMPLATE_LOADERS = (
@@ -1117,7 +1107,7 @@ TEMPLATE_LOADERS = (
     'edxmako.makoloader.MakoAppDirectoriesLoader',
 
     # 'django.template.loaders.filesystem.Loader',
-    # 'django.template.loaders.app_directories.Loader',
+    'django.template.loaders.app_directories.Loader',
 
 )
 
@@ -1200,23 +1190,66 @@ MIDDLEWARE_CLASSES = (
 # Clickjacking protection can be enabled by setting this to 'DENY'
 X_FRAME_OPTIONS = 'ALLOW'
 
-############################### Pipeline #######################################
+############################### PIPELINE #######################################
 
-STATICFILES_STORAGE = 'pipeline.storage.PipelineCachedStorage'
+PIPELINE_ENABLED = True
+
+# Process static files using RequireJS Optimizer
+STATICFILES_STORAGE = 'openedx.core.lib.django_require.staticstorage.OptimizedCachedRequireJsStorage'
+
+# List of finder classes that know how to find static files in various locations.
+# Note: the pipeline finder is included to be able to discover optimized files
+STATICFILES_FINDERS = [
+    'django.contrib.staticfiles.finders.FileSystemFinder',
+    'django.contrib.staticfiles.finders.AppDirectoriesFinder',
+    'pipeline.finders.PipelineFinder',
+]
+
+PIPELINE_CSS_COMPRESSOR = None
+PIPELINE_JS_COMPRESSOR = 'pipeline.compressors.uglifyjs.UglifyJSCompressor'
+
+# Setting that will only affect the edX version of django-pipeline until our changes are merged upstream
+PIPELINE_COMPILE_INPLACE = True
+
+# Don't wrap JavaScript as there is code that depends upon updating the global namespace
+PIPELINE_DISABLE_WRAPPER = True
+
+# Specify the UglifyJS binary to use
+PIPELINE_UGLIFYJS_BINARY = 'node_modules/.bin/uglifyjs'
 
 from openedx.core.lib.rooted_paths import rooted_glob
 
 courseware_js = (
     [
         'coffee/src/' + pth + '.js'
-        for pth in ['courseware', 'histogram', 'navigation', 'time']
+        for pth in ['courseware', 'histogram', 'navigation']
     ] +
     ['js/' + pth + '.js' for pth in ['ajax-error']] +
     sorted(rooted_glob(PROJECT_ROOT / 'static', 'coffee/src/modules/**/*.js'))
 )
 
-courseware_search_js = ['js/search/course/main.js']
-
+proctoring_js = (
+    [
+        'proctoring/js/models/proctored_exam_allowance_model.js',
+        'proctoring/js/models/proctored_exam_attempt_model.js',
+        'proctoring/js/models/proctored_exam_model.js'
+    ] +
+    [
+        'proctoring/js/collections/proctored_exam_allowance_collection.js',
+        'proctoring/js/collections/proctored_exam_attempt_collection.js',
+        'proctoring/js/collections/proctored_exam_collection.js'
+    ] +
+    [
+        'proctoring/js/views/Backbone.ModalDialog.js',
+        'proctoring/js/views/proctored_exam_add_allowance_view.js',
+        'proctoring/js/views/proctored_exam_allowance_view.js',
+        'proctoring/js/views/proctored_exam_attempt_view.js',
+        'proctoring/js/views/proctored_exam_view.js'
+    ] +
+    [
+        'proctoring/js/proctored_app.js'
+    ]
+)
 
 # Before a student accesses courseware, we do not
 # need many of the JS dependencies.  This includes
@@ -1234,23 +1267,50 @@ base_vendor_js = [
     'js/vendor/underscore-min.js',
     'js/vendor/require.js',
     'js/RequireJS-namespace-undefine.js',
+    'js/vendor/URI.min.js',
+    'js/vendor/backbone-min.js'
 ]
 
 main_vendor_js = base_vendor_js + [
     'js/vendor/json2.js',
     'js/vendor/jquery-ui.min.js',
     'js/vendor/jquery.qtip.min.js',
-    'js/vendor/swfobject/swfobject.js',
     'js/vendor/jquery.ba-bbq.min.js',
-    'js/vendor/URI.min.js',
+]
+
+# Common files used by both RequireJS code and non-RequireJS code
+base_application_js = [
+    'js/src/utility.js',
+    'js/src/logger.js',
+    'js/my_courses_dropdown.js',
+    'js/src/string_utils.js',
+    'js/form.ext.js',
+    'js/src/ie_shim.js',
+    'js/src/accessibility_tools.js',
+    'js/toggle_login_modal.js',
 ]
 
 dashboard_js = (
     sorted(rooted_glob(PROJECT_ROOT / 'static', 'js/dashboard/**/*.js'))
 )
-dashboard_search_js = ['js/search/dashboard/main.js']
-discussion_js = sorted(rooted_glob(COMMON_ROOT / 'static', 'coffee/src/discussion/**/*.js'))
-rwd_header_js = sorted(rooted_glob(PROJECT_ROOT / 'static', 'js/utils/rwd_header.js'))
+discussion_js = (
+    rooted_glob(PROJECT_ROOT / 'static', 'coffee/src/customwmd.js') +
+    rooted_glob(PROJECT_ROOT / 'static', 'coffee/src/mathjax_accessible.js') +
+    rooted_glob(PROJECT_ROOT / 'static', 'coffee/src/mathjax_delay_renderer.js') +
+    sorted(rooted_glob(COMMON_ROOT / 'static', 'coffee/src/discussion/**/*.js'))
+)
+
+discussion_vendor_js = [
+    'js/Markdown.Converter.js',
+    'js/Markdown.Sanitizer.js',
+    'js/Markdown.Editor.js',
+    'js/vendor/jquery.timeago.js',
+    'js/src/jquery.timeago.locale.js',
+    'js/vendor/jquery.truncate.js',
+    'js/jquery.ajaxfileupload.js',
+    'js/split.js'
+]
+
 staff_grading_js = sorted(rooted_glob(PROJECT_ROOT / 'static', 'coffee/src/staff_grading/**/*.js'))
 open_ended_js = sorted(rooted_glob(PROJECT_ROOT / 'static', 'coffee/src/open_ended/**/*.js'))
 notes_js = sorted(rooted_glob(PROJECT_ROOT / 'static', 'coffee/src/notes/**/*.js'))
@@ -1259,47 +1319,9 @@ instructor_dash_js = (
     sorted(rooted_glob(PROJECT_ROOT / 'static', 'js/instructor_dashboard/**/*.js'))
 )
 
-# JavaScript used by the student account and profile pages
-# These are not courseware, so they do not need many of the courseware-specific
-# JavaScript modules.
-student_account_js = [
-    'js/utils/rwd_header.js',
-    'js/utils/edx.utils.validate.js',
-    'js/form.ext.js',
-    'js/my_courses_dropdown.js',
-    'js/toggle_login_modal.js',
-    'js/sticky_filter.js',
-    'js/query-params.js',
-    'js/src/utility.js',
-    'js/src/accessibility_tools.js',
-    'js/src/ie_shim.js',
-    'js/src/string_utils.js',
-    'js/student_account/enrollment.js',
-    'js/student_account/emailoptin.js',
-    'js/student_account/shoppingcart.js',
-    'js/student_account/models/LoginModel.js',
-    'js/student_account/models/RegisterModel.js',
-    'js/student_account/models/PasswordResetModel.js',
-    'js/student_account/views/FormView.js',
-    'js/student_account/views/LoginView.js',
-    'js/student_account/views/HintedLoginView.js',
-    'js/student_account/views/RegisterView.js',
-    'js/student_account/views/PasswordResetView.js',
-    'js/student_account/views/AccessView.js',
-    'js/student_account/views/InstitutionLoginView.js',
-    'js/student_account/accessApp.js',
-]
-
 verify_student_js = [
-    'js/form.ext.js',
-    'js/my_courses_dropdown.js',
-    'js/toggle_login_modal.js',
     'js/sticky_filter.js',
     'js/query-params.js',
-    'js/src/utility.js',
-    'js/src/accessibility_tools.js',
-    'js/src/ie_shim.js',
-    'js/src/string_utils.js',
     'js/verify_student/models/verification_model.js',
     'js/verify_student/views/error_view.js',
     'js/verify_student/views/image_input_view.js',
@@ -1334,14 +1356,12 @@ incourse_reverify_js = [
     'js/verify_student/views/error_view.js',
     'js/verify_student/views/image_input_view.js',
     'js/verify_student/views/webcam_photo_view.js',
-    'js/verify_student/models/reverification_model.js',
+    'js/verify_student/models/verification_model.js',
     'js/verify_student/views/incourse_reverify_view.js',
     'js/verify_student/incourse_reverify.js',
 ]
 
 ccx_js = sorted(rooted_glob(PROJECT_ROOT / 'static', 'js/ccx/**/*.js'))
-
-discovery_js = ['js/discovery/main.js']
 
 certificates_web_view_js = [
     'js/vendor/jquery.min.js',
@@ -1403,14 +1423,12 @@ PIPELINE_CSS = {
     'style-course': {
         'source_filenames': [
             'css/lms-course.css',
-            'xmodule/modules.css',
         ],
         'output_filename': 'css/lms-course.css',
     },
     'style-course-rtl': {
         'source_filenames': [
             'css/lms-course-rtl.css',
-            'xmodule/modules.css',
         ],
         'output_filename': 'css/lms-course-rtl.css',
     },
@@ -1483,30 +1501,28 @@ project_js = set(rooted_glob(PROJECT_ROOT / 'static', 'coffee/src/**/*.js')) - s
 
 
 PIPELINE_JS = {
+    'base_application': {
+        'source_filenames': base_application_js,
+        'output_filename': 'js/lms-base-application.js',
+    },
+
     'application': {
 
         # Application will contain all paths not in courseware_only_js
-        'source_filenames': ['js/xblock/core.js'] + sorted(common_js) + sorted(project_js) + [
-            'js/form.ext.js',
-            'js/my_courses_dropdown.js',
-            'js/toggle_login_modal.js',
+        'source_filenames': ['js/xblock/core.js'] + sorted(common_js) + sorted(project_js) + base_application_js + [
             'js/sticky_filter.js',
             'js/query-params.js',
-            'js/src/utility.js',
-            'js/src/accessibility_tools.js',
-            'js/src/ie_shim.js',
-            'js/src/string_utils.js',
-            'js/src/logger.js',
+            'js/vendor/moment.min.js',
         ],
         'output_filename': 'js/lms-application.js',
+    },
+    'proctoring': {
+        'source_filenames': proctoring_js,
+        'output_filename': 'js/lms-proctoring.js',
     },
     'courseware': {
         'source_filenames': courseware_js,
         'output_filename': 'js/lms-courseware.js',
-    },
-    'courseware_search': {
-        'source_filenames': courseware_search_js,
-        'output_filename': 'js/lms-courseware-search.js',
     },
     'base_vendor': {
         'source_filenames': base_vendor_js,
@@ -1528,6 +1544,10 @@ PIPELINE_JS = {
         'source_filenames': discussion_js,
         'output_filename': 'js/discussion.js',
     },
+    'discussion_vendor': {
+        'source_filenames': discussion_vendor_js,
+        'output_filename': 'js/discussion_vendor.js',
+    },
     'staff_grading': {
         'source_filenames': staff_grading_js,
         'output_filename': 'js/staff_grading.js',
@@ -1547,18 +1567,6 @@ PIPELINE_JS = {
     'dashboard': {
         'source_filenames': dashboard_js,
         'output_filename': 'js/dashboard.js'
-    },
-    'dashboard_search': {
-        'source_filenames': dashboard_search_js,
-        'output_filename': 'js/dashboard-search.js',
-    },
-    'rwd_header': {
-        'source_filenames': rwd_header_js,
-        'output_filename': 'js/rwd_header.js'
-    },
-    'student_account': {
-        'source_filenames': student_account_js,
-        'output_filename': 'js/student_account.js'
     },
     'verify_student': {
         'source_filenames': verify_student_js,
@@ -1580,25 +1588,15 @@ PIPELINE_JS = {
         'source_filenames': ['js/footer-edx.js'],
         'output_filename': 'js/footer-edx.js'
     },
-    'discovery': {
-        'source_filenames': discovery_js,
-        'output_filename': 'js/discovery.js'
-    },
     'certificates_wv': {
         'source_filenames': certificates_web_view_js,
         'output_filename': 'js/certificates/web_view.js'
-    },
-    'utility': {
-        'source_filenames': ['js/src/utility.js'],
-        'output_filename': 'js/utility.js'
     },
     'credit_wv': {
         'source_filenames': credit_web_view_js,
         'output_filename': 'js/credit/web_view.js'
     }
 }
-
-PIPELINE_DISABLE_WRAPPER = True
 
 # Compile all coffee files in course data directories if they are out of date.
 # TODO: Remove this once we move data into Mongo. This is only temporary while
@@ -1620,21 +1618,60 @@ if os.path.isdir(DATA_DIR):
                 os.system("coffee -c %s" % (js_dir / filename))
 
 
-PIPELINE_CSS_COMPRESSOR = None
-PIPELINE_JS_COMPRESSOR = "pipeline.compressors.uglifyjs.UglifyJSCompressor"
-
 STATICFILES_IGNORE_PATTERNS = (
-    "sass/*",
-    "coffee/*",
+    "*.py",
+    "*.pyc",
+
+    # It would be nice if we could do, for example, "**/*.scss",
+    # but these strings get passed down to the `fnmatch` module,
+    # which doesn't support that. :(
+    # http://docs.python.org/2/library/fnmatch.html
+    "sass/*.scss",
+    "sass/*/*.scss",
+    "sass/*/*/*.scss",
+    "sass/*/*/*/*.scss",
+    "coffee/*.coffee",
+    "coffee/*/*.coffee",
+    "coffee/*/*/*.coffee",
+    "coffee/*/*/*/*.coffee",
+
+    # Ignore tests
+    "spec",
+    "spec_helpers",
 
     # Symlinks used by js-test-tool
     "xmodule_js",
 )
 
-PIPELINE_UGLIFYJS_BINARY = 'node_modules/.bin/uglifyjs'
 
-# Setting that will only affect the edX version of django-pipeline until our changes are merged upstream
-PIPELINE_COMPILE_INPLACE = True
+################################# DJANGO-REQUIRE ###############################
+
+# The baseUrl to pass to the r.js optimizer, relative to STATIC_ROOT.
+REQUIRE_BASE_URL = "./"
+
+# The name of a build profile to use for your project, relative to REQUIRE_BASE_URL.
+# A sensible value would be 'app.build.js'. Leave blank to use the built-in default build profile.
+# Set to False to disable running the default profile (e.g. if only using it to build Standalone
+# Modules)
+REQUIRE_BUILD_PROFILE = "lms/js/build.js"
+
+# The name of the require.js script used by your project, relative to REQUIRE_BASE_URL.
+REQUIRE_JS = "js/vendor/require.js"
+
+# A dictionary of standalone modules to build with almond.js.
+REQUIRE_STANDALONE_MODULES = {}
+
+# Whether to run django-require in debug mode.
+REQUIRE_DEBUG = False
+
+# A tuple of files to exclude from the compilation result of r.js.
+REQUIRE_EXCLUDE = ("build.txt",)
+
+# The execution environment in which to run r.js: auto, node or rhino.
+# auto will autodetect the environment and make use of node if available and rhino if not.
+# It can also be a path to a custom class that subclasses require.environments.Environment
+# and defines some "args" function that returns a list with the command arguments to execute.
+REQUIRE_ENVIRONMENT = "node"
 
 
 ################################# CELERY ######################################
@@ -1771,6 +1808,9 @@ INSTALLED_APPS = (
     'djcelery',
     'south',
 
+    # Common views
+    'openedx.core.djangoapps.common_views',
+
     # History tables
     'simple_history',
 
@@ -1780,14 +1820,19 @@ INSTALLED_APPS = (
     # Monitor the status of services
     'service_status',
 
+    # Display status message to students
+    'status',
+
     # For asset pipelining
     'edxmako',
     'pipeline',
-    'staticfiles',
+    'django.contrib.staticfiles',
     'static_replace',
 
+    # Theming
+    'openedx.core.djangoapps.theming',
+
     # Our courseware
-    'circuit',
     'courseware',
     'student',
 
@@ -1807,6 +1852,9 @@ INSTALLED_APPS = (
     'bulk_email',
     'branding',
 
+    # Student support tools
+    'support',
+
     # External auth (OpenID, shib)
     'external_auth',
     'django_openid_auth',
@@ -1815,6 +1863,12 @@ INSTALLED_APPS = (
     'provider',
     'provider.oauth2',
     'oauth2_provider',
+
+    # We don't use this directly (since we use OAuth2), but we need to install it anyway.
+    # When a user is deleted, Django queries all tables with a FK to the auth_user table,
+    # and since django-rest-framework-oauth imports this, it will try to access tables
+    # defined by oauth_provider.  If those tables don't exist, an error can occur.
+    'oauth_provider',
 
     'auth_exchange',
 
@@ -1854,9 +1908,6 @@ INSTALLED_APPS = (
     # User API
     'rest_framework',
     'openedx.core.djangoapps.user_api',
-
-    # Team API
-    'teams',
 
     # Shopping cart
     'shoppingcart',
@@ -1906,8 +1957,12 @@ INSTALLED_APPS = (
 
     'lms.djangoapps.lms_xblock',
 
+    # Course data caching
     'openedx.core.djangoapps.content.course_overviews',
     'openedx.core.djangoapps.content.course_structures',
+    'lms.djangoapps.course_blocks',
+
+    # Old course structure API
     'course_structure_api',
 
     # Mailchimp Syncing
@@ -1932,12 +1987,26 @@ INSTALLED_APPS = (
 
     # Grades API
     'grades_api',
+
+    # programs support
+    'openedx.core.djangoapps.programs',
+
+    # Self-paced course configuration
+    'openedx.core.djangoapps.self_paced',
 )
 
 ######################### CSRF #########################################
 
 # Forwards-compatibility with Django 1.7
 CSRF_COOKIE_AGE = 60 * 60 * 24 * 7 * 52
+
+
+######################### Django Rest Framework ########################
+
+REST_FRAMEWORK = {
+    'DEFAULT_PAGINATION_CLASS': 'openedx.core.lib.api.paginators.DefaultPagination',
+    'PAGE_SIZE': 10,
+}
 
 
 ######################### MARKETING SITE ###############################
@@ -1961,6 +2030,20 @@ MKTG_URL_LINK_MAP = {
 
     # Verified Certificates
     'WHAT_IS_VERIFIED_CERT': 'verified-certificate',
+}
+
+############################# SOCIAL MEDIA SHARING #############################
+# Social Media Sharing on Student Dashboard
+SOCIAL_SHARING_SETTINGS = {
+    # Note: Ensure 'CUSTOM_COURSE_URLS' has a matching value in cms/envs/common.py
+    'CUSTOM_COURSE_URLS': False,
+    'DASHBOARD_FACEBOOK': False,
+    'CERTIFICATE_FACEBOOK': False,
+    'CERTIFICATE_FACEBOOK_TEXT': None,
+    'CERTIFICATE_TWITTER': False,
+    'CERTIFICATE_TWITTER_TEXT': None,
+    'DASHBOARD_TWITTER': False,
+    'DASHBOARD_TWITTER_TEXT': None
 }
 
 ################# Social Media Footer Links #######################
@@ -2069,7 +2152,7 @@ if FEATURES.get('CLASS_DASHBOARD'):
     INSTALLED_APPS += ('class_dashboard',)
 
 ################ Enable credit eligibility feature ####################
-ENABLE_CREDIT_ELIGIBILITY = False
+ENABLE_CREDIT_ELIGIBILITY = True
 FEATURES['ENABLE_CREDIT_ELIGIBILITY'] = ENABLE_CREDIT_ELIGIBILITY
 
 ######################## CAS authentication ###########################
@@ -2117,9 +2200,6 @@ REGISTRATION_EXTRA_FIELDS = {
 ########################## CERTIFICATE NAME ########################
 CERT_NAME_SHORT = "Certificate"
 CERT_NAME_LONG = "Certificate of Achievement"
-
-############ CERTIFICATE VERIFICATION URL (STATIC FILES) ###########
-CERTIFICATES_STATIC_VERIFY_URL = "https://verify-test.edx.org/cert/"
 
 #################### Badgr OpenBadges generation #######################
 # Be sure to set up images for course modes using the BadgeImageConfiguration model in the certificates app.
@@ -2386,6 +2466,12 @@ OPTIONAL_APPS = (
 
     # milestones
     'milestones',
+
+    # edX Proctoring
+    'edx_proctoring',
+
+    # Organizations App (http://github.com/edx/edx-organizations)
+    'organizations',
 )
 
 for app_name in OPTIONAL_APPS:
@@ -2422,7 +2508,8 @@ INVOICE_PAYMENT_INSTRUCTIONS = "This is where you can\nput directions on how peo
 # Country code overrides
 # Used by django-countries
 COUNTRIES_OVERRIDE = {
-    "TW": _("Taiwan"),
+    # Taiwan is specifically not translated to avoid it being translated as "Taiwan (Province of China)"
+    "TW": "Taiwan",
 }
 
 # which access.py permission name to check in order to determine if a course is visible in
@@ -2487,13 +2574,35 @@ ACCOUNT_VISIBILITY_CONFIGURATION = {
         'time_zone',
         'language_proficiencies',
         'bio',
+        'account_privacy',
     ],
 
     # The list of account fields that are always public
     "public_fields": [
         'username',
         'profile_image',
+        'account_privacy',
     ],
+
+    # The list of account fields that are visible only to staff and users viewing their own profiles
+    "admin_fields": [
+        "username",
+        "email",
+        "date_joined",
+        "is_active",
+        "bio",
+        "country",
+        "profile_image",
+        "language_proficiencies",
+        "name",
+        "gender",
+        "goals",
+        "year_of_birth",
+        "level_of_education",
+        "mailing_address",
+        "requires_parental_consent",
+        "account_privacy",
+    ]
 }
 
 # E-Commerce API Configuration
@@ -2501,6 +2610,7 @@ ECOMMERCE_PUBLIC_URL_ROOT = None
 ECOMMERCE_API_URL = None
 ECOMMERCE_API_SIGNING_KEY = None
 ECOMMERCE_API_TIMEOUT = 5
+ECOMMERCE_SERVICE_WORKER_USERNAME = 'ecommerce_worker'
 
 # Reverification checkpoint name pattern
 CHECKPOINT_PATTERN = r'(?P<checkpoint_name>[^/]+)'
@@ -2564,8 +2674,43 @@ CREDIT_PROVIDER_SECRET_KEYS = {}
 # or denied for credit.
 CREDIT_PROVIDER_TIMESTAMP_EXPIRATION = 15 * 60
 
+# The Help link to the FAQ page about the credit
+CREDIT_HELP_LINK_URL = "#"
+
 # Default domain for the e-mail address associated with users who are created
 # via the LTI Provider feature. Note that the generated e-mail addresses are
 # not expected to be active; this setting simply allows administrators to
 # route any messages intended for LTI users to a common domain.
 LTI_USER_EMAIL_DOMAIN = 'lti.example.com'
+
+# An aggregate score is one derived from multiple problems (such as the
+# cumulative score for a vertical element containing many problems). Sending
+# aggregate scores immediately introduces two issues: one is a race condition
+# between the view method and the Celery task where the updated score may not
+# yet be visible to the database if the view has not yet returned (and committed
+# its transaction). The other is that the student is likely to receive a stream
+# of notifications as the score is updated with every problem. Waiting a
+# reasonable period of time allows the view transaction to end, and allows us to
+# collapse multiple score updates into a single message.
+# The time value is in seconds.
+LTI_AGGREGATE_SCORE_PASSBACK_DELAY = 15 * 60
+
+# Number of seconds before JWT tokens expire
+JWT_EXPIRATION = 30
+JWT_ISSUER = None
+
+# Credit notifications settings
+NOTIFICATION_EMAIL_CSS = "templates/credit_notifications/credit_notification.css"
+NOTIFICATION_EMAIL_EDX_LOGO = "templates/credit_notifications/edx-logo-header.png"
+
+#### PROCTORING CONFIGURATION DEFAULTS
+
+PROCTORING_BACKEND_PROVIDER = {
+    'class': 'edx_proctoring.backends.null.NullBackendProvider',
+    'options': {},
+}
+PROCTORING_SETTINGS = {}
+
+### IONISx Configuration
+
+IONISX_AUTH = None

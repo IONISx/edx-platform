@@ -20,7 +20,7 @@ sessions. Assumes structure:
 
 from .common import *
 import os
-from path import path
+from path import Path as path
 from warnings import filterwarnings, simplefilter
 from uuid import uuid4
 
@@ -65,6 +65,7 @@ TEST_ROOT = path('test_root')
 STATIC_ROOT = TEST_ROOT / "staticfiles"
 
 GITHUB_REPO_ROOT = TEST_ROOT / "data"
+DATA_DIR = TEST_ROOT / "data"
 COMMON_TEST_DATA_ROOT = COMMON_ROOT / "test" / "data"
 
 # For testing "push to lms"
@@ -91,10 +92,6 @@ STATICFILES_DIRS += [
 # http://stackoverflow.com/questions/12816941/unit-testing-with-django-pipeline
 STATICFILES_STORAGE = 'pipeline.storage.NonPackagingPipelineStorage'
 STATIC_URL = "/static/"
-PIPELINE_ENABLED = False
-
-TENDER_DOMAIN = "help.edge.edx.org"
-TENDER_SUBDOMAIN = "edxedge"
 
 # Update module store settings per defaults for tests
 update_module_store_settings(
@@ -178,7 +175,7 @@ CACHES = {
 INSTALLED_APPS += ('external_auth', )
 
 # Add milestones to Installed apps for testing
-INSTALLED_APPS += ('milestones', 'openedx.core.djangoapps.call_stack_manager')
+INSTALLED_APPS += ('milestones', )
 
 # hide ratelimit warnings while running tests
 filterwarnings('ignore', message='No request passed to the backend, unable to rate-limit')
@@ -212,8 +209,8 @@ PASSWORD_HASHERS = (
     'django.contrib.auth.hashers.MD5PasswordHasher',
 )
 
-# dummy segment-io key
-SEGMENT_IO_KEY = '***REMOVED***'
+# No segment key
+CMS_SEGMENT_KEY = None
 
 FEATURES['ENABLE_SERVICE_STATUS'] = True
 
@@ -283,8 +280,5 @@ FEATURES['ENABLE_TEAMS'] = True
 # Dummy secret key for dev/test
 SECRET_KEY = '85920908f28904ed733fe576320db18cabd7b6cd'
 
-# IONISx
-IONISX_AUTH = {
-    'ROOT_URL': 'http://example.com',
-    'LOGOUT_URL': 'http://example.com/logout'
-}
+# Disable THIRD_PARTY_AUTH in tests
+FEATURES.pop('ENABLE_THIRD_PARTY_AUTH', None)

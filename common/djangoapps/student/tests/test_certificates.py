@@ -13,6 +13,7 @@ from xmodule.modulestore.tests.factories import CourseFactory
 from student.tests.factories import UserFactory, CourseEnrollmentFactory
 from certificates.tests.factories import GeneratedCertificateFactory  # pylint: disable=import-error
 from certificates.api import get_certificate_url  # pylint: disable=import-error
+from course_modes.models import CourseMode
 
 # pylint: disable=no-member
 
@@ -42,14 +43,28 @@ class CertificateDisplayTest(ModuleStoreTestCase):
         self._create_certificate(enrollment_mode)
         self._check_can_download_certificate()
 
+    @patch.dict('django.conf.settings.FEATURES', {'CERTIFICATES_HTML_VIEW': False})
+    def test_display_verified_certificate_no_id(self):
+        """
+        Confirm that if we get a certificate with a no-id-professional mode
+        we still can download our certificate
+        """
+        self._create_certificate(CourseMode.NO_ID_PROFESSIONAL_MODE)
+        self._check_can_download_certificate_no_id()
+
     @ddt.data('verified', 'honor')
     @override_settings(CERT_NAME_SHORT='Test_Certificate')
     @patch.dict('django.conf.settings.FEATURES', {'CERTIFICATES_HTML_VIEW': True})
     def test_display_download_certificate_button(self, enrollment_mode):
         """
-        Tests if CERTIFICATES_HTML_VIEW is True and there is no active certificate configuration available
+        Tests if CERTIFICATES_HTML_VIEW is True
+        and course has enabled web certificates via cert_html_view_enabled setting
+        and no active certificate configuration available
         then any of the Download certificate button should not be visible.
         """
+        self.course.cert_html_view_enabled = True
+        self.course.save()
+        self.store.update_item(self.course, self.user.id)
         self._create_certificate(enrollment_mode)
         self._check_can_not_download_certificate()
 
@@ -59,8 +74,7 @@ class CertificateDisplayTest(ModuleStoreTestCase):
     def test_linked_student_to_web_view_credential(self, enrollment_mode):
         test_url = get_certificate_url(
             user_id=self.user.id,
-            course_id=unicode(self.course.id),
-            verify_uuid='abcdefg12345678'
+            course_id=unicode(self.course.id)
         )
 
         self._create_certificate(enrollment_mode)
@@ -75,6 +89,7 @@ class CertificateDisplayTest(ModuleStoreTestCase):
             }
         ]
         self.course.certificates = {'certificates': certificates}
+        self.course.cert_html_view_enabled = True
         self.course.save()   # pylint: disable=no-member
         self.store.update_item(self.course, self.user.id)
 
@@ -98,6 +113,16 @@ class CertificateDisplayTest(ModuleStoreTestCase):
     def _check_can_download_certificate(self):
         response = self.client.get(reverse('dashboard'))
         self.assertContains(response, u'Download Your ID Verified')
+        self.assertContains(response, self.DOWNLOAD_URL)
+
+    def _check_can_download_certificate_no_id(self):
+        """
+        Inspects the dashboard to see if a certificate for a non verified course enrollment
+        is present
+        """
+        response = self.client.get(reverse('dashboard'))
+        self.assertContains(response, u'Download')
+        self.assertContains(response, u'(PDF)')
         self.assertContains(response, self.DOWNLOAD_URL)
 
     def _check_can_not_download_certificate(self):

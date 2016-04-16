@@ -118,7 +118,7 @@ class GenerateUserCertificatesTest(EventTestMixin, ModuleStoreTestCase):
 
     ERROR_REASON = "Kaboom!"
 
-    def setUp(self):
+    def setUp(self):  # pylint: disable=arguments-differ
         super(GenerateUserCertificatesTest, self).setUp('certificates.api.tracker')
 
         self.student = UserFactory.create(
@@ -148,7 +148,7 @@ class GenerateUserCertificatesTest(EventTestMixin, ModuleStoreTestCase):
             'edx.certificate.created',
             user_id=self.student.id,
             course_id=unicode(self.course.id),
-            certificate_url=certs_api.get_certificate_url(self.student.id, self.course.id, cert.verify_uuid),
+            certificate_url=certs_api.get_certificate_url(self.student.id, self.course.id),
             certificate_id=cert.verify_uuid,
             enrollment_mode=cert.mode,
             generation_mode='batch'
@@ -176,6 +176,14 @@ class GenerateUserCertificatesTest(EventTestMixin, ModuleStoreTestCase):
         # Verify that the certificate has status 'downloadable'
         cert = GeneratedCertificate.objects.get(user=self.student, course_id=self.course.id)
         self.assertEqual(cert.status, CertificateStatuses.downloadable)
+
+    @patch.dict(settings.FEATURES, {'CERTIFICATES_HTML_VIEW': False})
+    def test_cert_url_empty_with_invalid_certificate(self):
+        """
+        Test certificate url is empty if html view is not enabled and certificate is not yet generated
+        """
+        url = certs_api.get_certificate_url(self.student.id, self.course.id)
+        self.assertEqual(url, "")
 
     @contextmanager
     def _mock_passing_grade(self):
@@ -207,26 +215,26 @@ class GenerateUserCertificatesTest(EventTestMixin, ModuleStoreTestCase):
                 'name': 'Test Certificate Name',
                 'description': 'Test Certificate Description',
                 'course_title': 'tes_course_title',
-                'org_logo_path': '/t4x/orgX/testX/asset/org-logo.png',
                 'signatories': [],
                 'version': 1,
                 'is_active': True
             }
         ]
         self.course.certificates = {'certificates': certificates}
+        self.course.cert_html_view_enabled = True
         self.course.save()
         self.store.update_item(self.course, self.user.id)
 
 
 @attr('shard_1')
 @ddt.ddt
-class CertificateGenerationEnabledTest(TestCase):
+class CertificateGenerationEnabledTest(EventTestMixin, TestCase):
     """Test enabling/disabling self-generated certificates for a course. """
 
     COURSE_KEY = CourseLocator(org='test', course='test', run='test')
 
-    def setUp(self):
-        super(CertificateGenerationEnabledTest, self).setUp()
+    def setUp(self):  # pylint: disable=arguments-differ
+        super(CertificateGenerationEnabledTest, self).setUp('certificates.api.tracker')
 
         # Since model-based configuration is cached, we need
         # to clear the cache before each test.
@@ -247,6 +255,12 @@ class CertificateGenerationEnabledTest(TestCase):
 
         if is_course_enabled is not None:
             certs_api.set_cert_generation_enabled(self.COURSE_KEY, is_course_enabled)
+            cert_event_type = 'enabled' if is_course_enabled else 'disabled'
+            event_name = '.'.join(['edx', 'certificate', 'generation', cert_event_type])
+            self.assert_event_emitted(
+                event_name,
+                course_id=unicode(self.COURSE_KEY),
+            )
 
         self._assert_enabled_for_course(self.COURSE_KEY, expect_enabled)
 

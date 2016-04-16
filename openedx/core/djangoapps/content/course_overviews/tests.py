@@ -4,15 +4,18 @@ Tests for course_overviews app.
 import datetime
 import ddt
 import itertools
-import pytz
 import math
+import mock
+import pytz
 
 from django.utils import timezone
 
 from lms.djangoapps.certificates.api import get_active_web_certificate
 from lms.djangoapps.courseware.courses import course_image_url
 from xmodule.course_metadata_utils import DEFAULT_START_DATE
+from xmodule.error_module import ErrorDescriptor
 from xmodule.modulestore import ModuleStoreEnum
+from xmodule.modulestore.django import modulestore
 from xmodule.modulestore.tests.django_utils import ModuleStoreTestCase
 from xmodule.modulestore.tests.factories import CourseFactory, check_mongo_calls, check_mongo_calls_range
 
@@ -31,6 +34,8 @@ class CourseOverviewTestCase(ModuleStoreTestCase):
     NEXT_WEEK = TODAY + datetime.timedelta(days=7)
     NEXT_MONTH = TODAY + datetime.timedelta(days=30)
 
+    COURSE_OVERVIEW_TABS = {'courseware', 'info', 'textbooks', 'discussion', 'wiki', 'progress'}
+
     def check_course_overview_against_course(self, course):
         """
         Compares a CourseOverview object against its corresponding
@@ -41,12 +46,18 @@ class CourseOverviewTestCase(ModuleStoreTestCase):
          - the CourseDescriptor itself
          - a CourseOverview that was newly constructed from _create_from_course
          - a CourseOverview that was loaded from the MySQL database
+
+        Arguments:
+            course (CourseDescriptor): the course to be checked.
         """
 
         def get_seconds_since_epoch(date_time):
             """
             Returns the number of seconds between the Unix Epoch and the given
                 datetime. If the given datetime is None, return None.
+
+            Arguments:
+                date_time (datetime): the datetime in question.
             """
             if date_time is None:
                 return None
@@ -82,6 +93,9 @@ class CourseOverviewTestCase(ModuleStoreTestCase):
             'display_name_with_default',
             'start_date_is_still_default',
             'pre_requisite_courses',
+            'enrollment_domain',
+            'invitation_only',
+            'max_student_enrollments_allowed',
         ]
         for attribute_name in fields_to_test:
             course_value = getattr(course, attribute_name)
@@ -116,27 +130,47 @@ class CourseOverviewTestCase(ModuleStoreTestCase):
         # resulting values are often off by fractions of a second. So, as a
         # workaround, we simply test if the start and end times are the same
         # number of seconds from the Unix epoch.
-        others_to_test = [(
-            course_image_url(course),
-            course_overview_cache_miss.course_image_url,
-            course_overview_cache_hit.course_image_url
-        ), (
-            get_active_web_certificate(course) is not None,
-            course_overview_cache_miss.has_any_active_web_certificate,
-            course_overview_cache_hit.has_any_active_web_certificate
-
-        ), (
-            get_seconds_since_epoch(course.start),
-            get_seconds_since_epoch(course_overview_cache_miss.start),
-            get_seconds_since_epoch(course_overview_cache_hit.start),
-        ), (
-            get_seconds_since_epoch(course.end),
-            get_seconds_since_epoch(course_overview_cache_miss.end),
-            get_seconds_since_epoch(course_overview_cache_hit.end),
-        )]
+        others_to_test = [
+            (
+                course_image_url(course),
+                course_overview_cache_miss.course_image_url,
+                course_overview_cache_hit.course_image_url
+            ),
+            (
+                get_active_web_certificate(course) is not None,
+                course_overview_cache_miss.has_any_active_web_certificate,
+                course_overview_cache_hit.has_any_active_web_certificate
+            ),
+            (
+                get_seconds_since_epoch(course.start),
+                get_seconds_since_epoch(course_overview_cache_miss.start),
+                get_seconds_since_epoch(course_overview_cache_hit.start),
+            ),
+            (
+                get_seconds_since_epoch(course.end),
+                get_seconds_since_epoch(course_overview_cache_miss.end),
+                get_seconds_since_epoch(course_overview_cache_hit.end),
+            ),
+            (
+                get_seconds_since_epoch(course.enrollment_start),
+                get_seconds_since_epoch(course_overview_cache_miss.enrollment_start),
+                get_seconds_since_epoch(course_overview_cache_hit.enrollment_start),
+            ),
+            (
+                get_seconds_since_epoch(course.enrollment_end),
+                get_seconds_since_epoch(course_overview_cache_miss.enrollment_end),
+                get_seconds_since_epoch(course_overview_cache_hit.enrollment_end),
+            ),
+        ]
         for (course_value, cache_miss_value, cache_hit_value) in others_to_test:
             self.assertEqual(course_value, cache_miss_value)
             self.assertEqual(cache_miss_value, cache_hit_value)
+
+        # test tabs for both cached miss and cached hit courses
+        for course_overview in [course_overview_cache_miss, course_overview_cache_hit]:
+            course_overview_tabs = course_overview.tabs.all()
+            course_resp_tabs = {tab.tab_id for tab in course_overview_tabs}
+            self.assertEqual(self.COURSE_OVERVIEW_TABS, course_resp_tabs)
 
     @ddt.data(*itertools.product(
         [
@@ -189,36 +223,30 @@ class CourseOverviewTestCase(ModuleStoreTestCase):
         by comparing pairs of them given a variety of scenarios.
 
         Arguments:
-            course_kwargs (dict): kwargs to be passed to course constructor
-            modulestore_type (ModuleStoreEnum.Type)
-            is_user_enrolled (bool)
+            course_kwargs (dict): kwargs to be passed to course constructor.
+            modulestore_type (ModuleStoreEnum.Type): type of store to create the
+                course in.
         """
-
-        course = CourseFactory.create(
-            course="TEST101",
-            org="edX",
-            run="Run1",
-            default_store=modulestore_type,
-            **course_kwargs
-        )
+        # Note: We specify a value for 'run' here because, for some reason,
+        # .create raises an InvalidKeyError if we don't (even though my
+        # other test functions don't specify a run but work fine).
+        course = CourseFactory.create(default_store=modulestore_type, run="TestRun", **course_kwargs)
         self.check_course_overview_against_course(course)
 
     @ddt.data(ModuleStoreEnum.Type.mongo, ModuleStoreEnum.Type.split)
     def test_course_overview_cache_invalidation(self, modulestore_type):
         """
-        Tests that when a course is published, the corresponding
+        Tests that when a course is published or deleted, the corresponding
         course_overview is removed from the cache.
+
+        Arguments:
+            modulestore_type (ModuleStoreEnum.Type): type of store to create the
+                course in.
         """
         with self.store.default_store(modulestore_type):
 
             # Create a course where mobile_available is True.
-            course = CourseFactory.create(
-                course="TEST101",
-                org="edX",
-                run="Run1",
-                mobile_available=True,
-                default_store=modulestore_type
-            )
+            course = CourseFactory.create(mobile_available=True, default_store=modulestore_type)
             course_overview_1 = CourseOverview.get_from_id(course.id)
             self.assertTrue(course_overview_1.mobile_available)
 
@@ -233,26 +261,149 @@ class CourseOverviewTestCase(ModuleStoreTestCase):
             course_overview_2 = CourseOverview.get_from_id(course.id)
             self.assertFalse(course_overview_2.mobile_available)
 
-    @ddt.data((ModuleStoreEnum.Type.mongo, 1, 1), (ModuleStoreEnum.Type.split, 3, 4))
-    @ddt.unpack
-    def test_course_overview_caching(self, modulestore_type, min_mongo_calls, max_mongo_calls):
+            # Verify that when the course is deleted, the corresponding CourseOverview is deleted as well.
+            with self.assertRaises(CourseOverview.DoesNotExist):
+                self.store.delete_course(course.id, ModuleStoreEnum.UserID.test)
+                CourseOverview.get_from_id(course.id)
+
+    @ddt.data(ModuleStoreEnum.Type.mongo, ModuleStoreEnum.Type.split)
+    def test_course_overview_caching(self, modulestore_type):
         """
         Tests that CourseOverview structures are actually getting cached.
+
+        Arguments:
+            modulestore_type (ModuleStoreEnum.Type): type of store to create the
+                course in.
         """
-        course = CourseFactory.create(
-            course="TEST101",
-            org="edX",
-            run="Run1",
-            mobile_available=True,
-            default_store=modulestore_type
-        )
 
-        # The first time we load a CourseOverview, it will be a cache miss, so
-        # we expect the modulestore to be queried.
-        with check_mongo_calls_range(max_finds=max_mongo_calls, min_finds=min_mongo_calls):
-            _course_overview_1 = CourseOverview.get_from_id(course.id)
+        # Creating a new course will trigger a publish event and the course will be cached
+        course = CourseFactory.create(default_store=modulestore_type, emit_signals=True)
 
-        # The second time we load a CourseOverview, it will be a cache hit, so
-        # we expect no modulestore queries to be made.
+        # The cache will be hit and mongo will not be queried
         with check_mongo_calls(0):
-            _course_overview_2 = CourseOverview.get_from_id(course.id)
+            CourseOverview.get_from_id(course.id)
+
+    @ddt.data(ModuleStoreEnum.Type.split, ModuleStoreEnum.Type.mongo)
+    def test_get_non_existent_course(self, modulestore_type):
+        """
+        Tests that requesting a non-existent course from get_from_id raises
+        CourseOverview.DoesNotExist.
+
+        Arguments:
+            modulestore_type (ModuleStoreEnum.Type): type of store to create the
+                course in.
+        """
+        store = modulestore()._get_modulestore_by_type(modulestore_type)  # pylint: disable=protected-access
+        with self.assertRaises(CourseOverview.DoesNotExist):
+            CourseOverview.get_from_id(store.make_course_key('Non', 'Existent', 'Course'))
+
+    def test_get_errored_course(self):
+        """
+        Test that getting an ErrorDescriptor back from the module store causes
+        load_from_module_store to raise an IOError.
+        """
+        mock_get_course = mock.Mock(return_value=ErrorDescriptor)
+        with mock.patch('xmodule.modulestore.mixed.MixedModuleStore.get_course', mock_get_course):
+            # This mock makes it so when the module store tries to load course data,
+            # an exception is thrown, which causes get_course to return an ErrorDescriptor,
+            # which causes get_from_id to raise an IOError.
+            with self.assertRaises(IOError):
+                CourseOverview.load_from_module_store(self.store.make_course_key('Non', 'Existent', 'Course'))
+
+    def test_malformed_grading_policy(self):
+        """
+        Test that CourseOverview handles courses with a malformed grading policy
+        such that course._grading_policy['GRADE_CUTOFFS'] = {} by defaulting
+        .lowest_passing_grade to None.
+
+        Created in response to https://openedx.atlassian.net/browse/TNL-2806.
+        """
+        course = CourseFactory.create()
+        course._grading_policy['GRADE_CUTOFFS'] = {}  # pylint: disable=protected-access
+        with self.assertRaises(ValueError):
+            __ = course.lowest_passing_grade
+        course_overview = CourseOverview._create_from_course(course)  # pylint: disable=protected-access
+        self.assertEqual(course_overview.lowest_passing_grade, None)
+
+    @ddt.data((ModuleStoreEnum.Type.mongo, 1, 1), (ModuleStoreEnum.Type.split, 3, 4))
+    @ddt.unpack
+    def test_versioning(self, modulestore_type, min_mongo_calls, max_mongo_calls):
+        """
+        Test that CourseOverviews with old version numbers are thrown out.
+        """
+        with self.store.default_store(modulestore_type):
+            course = CourseFactory.create()
+            course_overview = CourseOverview.get_from_id(course.id)
+            course_overview.version = CourseOverview.VERSION - 1
+            course_overview.save()
+
+            # Because the course overview now has an old version number, it should
+            # be thrown out after being loaded from the cache, which results in
+            # a call to get_course.
+            with check_mongo_calls_range(max_finds=max_mongo_calls, min_finds=min_mongo_calls):
+                _course_overview_2 = CourseOverview.get_from_id(course.id)
+
+    def test_course_overview_saving_race_condition(self):
+        """
+        Tests that the following scenario will not cause an unhandled exception:
+        - Multiple concurrent requests are made for the same non-existent CourseOverview.
+        - A race condition in the django ORM's save method that checks for the presence
+          of the primary key performs an Insert instead of an Update operation.
+        - An IntegrityError is raised when attempting to create duplicate entries.
+        - This should be handled gracefully in CourseOverview.get_from_id.
+
+        Created in response to https://openedx.atlassian.net/browse/MA-1061.
+        """
+        course = CourseFactory.create()
+
+        # mock the CourseOverview ORM to raise a DoesNotExist exception to force re-creation of the object
+        with mock.patch(
+            'openedx.core.djangoapps.content.course_overviews.models.CourseOverview.objects.get'
+        ) as mock_getter:
+
+            mock_getter.side_effect = CourseOverview.DoesNotExist
+
+            # mock the CourseOverview ORM to not find the primary-key to force an Insert of the object
+            with mock.patch(
+                'openedx.core.djangoapps.content.course_overviews.models.CourseOverview._get_pk_val'
+            ) as mock_get_pk_val:
+
+                mock_get_pk_val.return_value = None
+
+                # verify the CourseOverview is loaded successfully both times,
+                # including after an IntegrityError exception the 2nd time
+                for _ in range(2):
+                    self.assertIsInstance(CourseOverview.get_from_id(course.id), CourseOverview)
+
+    def test_course_overview_version_update(self):
+        """
+        Test that when we are running in a partially deployed state (where both
+        old and new CourseOverview.VERSION values are active), that we behave
+        properly. This assumes that all updates are backwards compatible, or
+        at least are backwards compatible between version N and N-1.
+        """
+        course = CourseFactory.create()
+        with mock.patch('openedx.core.djangoapps.content.course_overviews.models.CourseOverview.VERSION', new=10):
+            # This will create a version 10 CourseOverview
+            overview_v10 = CourseOverview.get_from_id(course.id)
+            self.assertEqual(overview_v10.version, 10)
+
+            # Now we're going to muck with the values and manually save it as v09
+            overview_v10.version = 9
+            overview_v10.save()
+
+            # Now we're going to ask for it again. Because 9 < 10, we expect
+            # that this entry will be deleted() and that we'll get back a new
+            # entry with version = 10 again.
+            updated_overview = CourseOverview.get_from_id(course.id)
+            self.assertEqual(updated_overview.version, 10)
+
+            # Now we're going to muck with this and set it a version higher in
+            # the database.
+            updated_overview.version = 11
+            updated_overview.save()
+
+            # Because CourseOverview is encountering a version *higher* than it
+            # knows how to write, it's not going to overwrite what's there.
+            unmodified_overview = CourseOverview.get_from_id(course.id)
+            self.assertEqual(unmodified_overview.version, 11)

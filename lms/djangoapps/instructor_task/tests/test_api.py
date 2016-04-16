@@ -14,11 +14,13 @@ from instructor_task.api import (
     submit_reset_problem_attempts_for_all_students,
     submit_delete_problem_state_for_all_students,
     submit_bulk_course_email,
+    submit_calculate_problem_responses_csv,
     submit_calculate_students_features_csv,
     submit_cohort_students,
     submit_detailed_enrollment_features_csv,
     submit_calculate_may_enroll_csv,
     submit_executive_summary_report,
+    submit_course_survey_report,
     generate_certificates_for_all_students,
 )
 
@@ -188,7 +190,7 @@ class InstructorTaskCourseSubmitTest(TestReportMixin, InstructorTaskCourseTestCa
         `AlreadyRunningError`.
         """
         instructor_task = api_call()
-        instructor_task = InstructorTask.objects.get(id=instructor_task.id)  # pylint: disable=no-member
+        instructor_task = InstructorTask.objects.get(id=instructor_task.id)
         instructor_task.task_state = PROGRESS
         instructor_task.save()
         with self.assertRaises(AlreadyRunningError):
@@ -200,6 +202,14 @@ class InstructorTaskCourseSubmitTest(TestReportMixin, InstructorTaskCourseTestCa
             self.create_task_request(self.instructor),
             self.course.id,
             email_id
+        )
+        self._test_resubmission(api_call)
+
+    def test_submit_calculate_problem_responses(self):
+        api_call = lambda: submit_calculate_problem_responses_csv(
+            self.create_task_request(self.instructor),
+            self.course.id,
+            problem_location=''
         )
         self._test_resubmission(api_call)
 
@@ -218,6 +228,12 @@ class InstructorTaskCourseSubmitTest(TestReportMixin, InstructorTaskCourseTestCa
 
     def test_submit_executive_summary_report(self):
         api_call = lambda: submit_executive_summary_report(
+            self.create_task_request(self.instructor), self.course.id
+        )
+        self._test_resubmission(api_call)
+
+    def test_submit_course_survey_report(self):
+        api_call = lambda: submit_course_survey_report(
             self.create_task_request(self.instructor), self.course.id
         )
         self._test_resubmission(api_call)

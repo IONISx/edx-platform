@@ -32,7 +32,7 @@ urlpatterns = patterns(
         'contentstore.views.component_handler', name='component_handler'),
 
     url(r'^xblock/resource/(?P<block_type>[^/]*)/(?P<uri>.*)$',
-        'contentstore.views.xblock.xblock_resource', name='xblock_resource_url'),
+        'openedx.core.djangoapps.common_views.xblock.xblock_resource', name='xblock_resource_url'),
 
     # temporary landing page for a course
     url(r'^edge/(?P<org>[^/]+)/(?P<course>[^/]+)/course/(?P<coursename>[^/]+)$',
@@ -58,14 +58,26 @@ urlpatterns += patterns(
 
     url(r'^create_account$', 'student.views.create_account', name='create_account'),
     url(r'^activate/(?P<key>[^/]*)$', 'student.views.activate_account', name='activate'),
-    url(r'^signin$', 'student.views.signin_user', name="login"),
-    url(r'^signup$', 'student.views.signin_user', name='signup'),
-
 
     # ajax view that actually does the work
     url(r'^login_post$', 'student.views.login_user', name='login_post'),
     url(r'^logout$', 'student.views.logout_user', name='logout'),
 )
+
+if settings.IONISX_AUTH:
+    urlpatterns += patterns(
+        '',
+
+        url(r'^signup$', 'student.views.register_user', name='signup'),
+        url(r'^signin$', 'student.views.signin_user', name="login"),
+    )
+else:
+    urlpatterns += patterns(
+        'contentstore.views',
+
+        url(r'^signup$', 'signup', name='signup'),
+        url(r'^signin$', 'login_page', name='login'),
+    )
 
 # restful api
 urlpatterns += patterns(
@@ -196,6 +208,12 @@ if settings.DEBUG:
         urlpatterns += dev_urlpatterns
     except ImportError:
         pass
+
+if 'debug_toolbar' in settings.INSTALLED_APPS:
+    import debug_toolbar
+    urlpatterns += (
+        url(r'^__debug__/', include(debug_toolbar.urls)),
+    )
 
 # Custom error pages
 # pylint: disable=invalid-name

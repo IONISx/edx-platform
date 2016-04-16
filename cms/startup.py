@@ -2,6 +2,8 @@
 Module with code executed during Studio startup
 """
 
+import sys
+
 from django.conf import settings
 
 # Force settings to run so that the python path is modified
@@ -9,6 +11,9 @@ settings.INSTALLED_APPS  # pylint: disable=pointless-statement
 
 from openedx.core.lib.django_startup import autostartup
 from monkey_patch import django_utils_translation
+
+import xmodule.x_module
+import cms.lib.xblock.runtime
 
 
 def run():
@@ -26,6 +31,13 @@ def run():
 
     if settings.FEATURES.get('ENABLE_THIRD_PARTY_AUTH', False):
         enable_third_party_auth()
+
+    # In order to allow descriptors to use a handler url, we need to
+    # monkey-patch the x_module library.
+    # TODO: Remove this code when Runtimes are no longer created by modulestores
+    # https://openedx.atlassian.net/wiki/display/PLAT/Convert+from+Storage-centric+runtimes+to+Application-centric+runtimes
+    xmodule.x_module.descriptor_global_handler_url = cms.lib.xblock.runtime.handler_url
+    xmodule.x_module.descriptor_global_local_resource_url = cms.lib.xblock.runtime.local_resource_url
 
 
 def add_mimetypes():
@@ -82,3 +94,14 @@ def enable_third_party_auth():
 
     from third_party_auth import settings as auth_settings
     auth_settings.apply_settings(settings)
+
+    # Override studio-specific settings
+    settings.SOCIAL_AUTH_LOGIN_REDIRECT_URL = '/home'
+
+    # Let's reload social.*
+    # This is really dirty, but `autostartup` loads social and it
+    # should not.
+    for module_name in [m for m in sys.modules if m.startswith('social.apps.django')]:
+        module = sys.modules.get(module_name)
+        if module:
+            reload(module)

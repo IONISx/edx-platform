@@ -9,6 +9,12 @@ from django.shortcuts import redirect
 from django.core.urlresolvers import reverse
 import external_auth.views
 
+import third_party_auth
+from third_party_auth.pipeline import (
+    get_login_url,
+    AUTH_ENTRY_LOGIN, AUTH_ENTRY_REGISTER
+)
+
 from xmodule.modulestore.django import modulestore
 from opaque_keys.edx.keys import CourseKey
 
@@ -56,16 +62,12 @@ def login(request):
     # is not handling the request.
     response = None
 
-    if settings.FEATURES.get('ENABLE_THIRD_PARTY_AUTH'):
-        # Redirect to IONISx, we don't want the registration form.
-        get = request.GET.copy()
-
-        if 'course_id' in request.GET:
-            request.session['enroll_course_id'] = request.GET.get('course_id')
-            get.update({'next': reverse('about_course', kwargs={'course_id': unicode(request.GET.get('course_id'))})})
-
-        redirect_uri = reverse('social:begin', args=('portal-oauth2',))
-        response = external_auth.views.redirect_with_get(redirect_uri, get, do_reverse=False)
+    if settings.IONISX_AUTH and third_party_auth.is_enabled():
+        # IONISx Authentication is enabled so we directly redirect
+        # to IONISx portal
+        redirect_to = request.GET.get('next')
+        redirect_uri = get_login_url('oa2-portal-oauth2', AUTH_ENTRY_LOGIN, redirect_to)
+        response = redirect(redirect_uri)
 
     elif settings.FEATURES['AUTH_USE_CERTIFICATES'] and external_auth.views.ssl_get_cert_from_request(request):
         # SSL login doesn't require a view, so redirect
@@ -96,16 +98,13 @@ def register(request):
 
     """
     response = None
-    if settings.FEATURES.get('ENABLE_THIRD_PARTY_AUTH'):
-        # Redirect to IONISx, we don't want the registration form.
-        get = request.GET.copy()
 
-        if 'course_id' in request.GET:
-            request.session['enroll_course_id'] = request.GET.get('course_id')
-            get.update({'next': reverse('about_course', kwargs={'course_id': unicode(request.GET.get('course_id'))})})
-
-        redirect_uri = reverse('social:begin', args=('portal-oauth2',))
-        response = external_auth.views.redirect_with_get(redirect_uri, get, do_reverse=False)
+    if settings.IONISX_AUTH and third_party_auth.is_enabled():
+        # IONISx Authentication is enabled so we directly redirect
+        # to IONISx portal
+        redirect_to = request.GET.get('next')
+        redirect_uri = get_login_url('oa2-portal-oauth2', AUTH_ENTRY_REGISTER, redirect_to)
+        response = redirect(redirect_uri)
 
     elif settings.FEATURES.get('AUTH_USE_CERTIFICATES_IMMEDIATE_SIGNUP'):
         # Redirect to branding to process their certificate if SSL is enabled

@@ -2,7 +2,6 @@
 Acceptance tests for Content Libraries in Studio
 """
 from ddt import ddt, data
-from unittest import skip
 from nose.plugins.attrib import attr
 from flaky import flaky
 
@@ -14,7 +13,7 @@ from ...pages.studio.library import LibraryEditPage
 from ...pages.studio.users import LibraryUsersPage
 
 
-@attr('shard_4')
+@attr('shard_2')
 @ddt
 class LibraryEditPageTest(StudioLibraryTest):
     """
@@ -187,7 +186,7 @@ class LibraryEditPageTest(StudioLibraryTest):
         self.assertIn("Checkboxes", problem_block.name)
 
 
-@attr('shard_4')
+@attr('shard_2')
 @ddt
 class LibraryNavigationTest(StudioLibraryTest):
     """
@@ -523,9 +522,7 @@ class LibraryUsersPageTest(StudioLibraryTest):
         """
         self.page = LibraryUsersPage(self.browser, self.library_key)
         self.page.visit()
-        self.page.wait_until_no_loading_indicator()
 
-    @flaky  # TODO fix this; see TNL-2647
     def test_user_management(self):
         """
         Scenario: Ensure that we can edit the permissions of users.
@@ -640,3 +637,26 @@ class LibraryUsersPageTest(StudioLibraryTest):
         self.assertEqual(len(self.page.users), 1)
         user = self.page.users[0]
         self.assertTrue(user.is_current_user)
+
+
+@attr('a11y')
+class StudioLibraryA11yTest(StudioLibraryTest):
+    """
+    Class to test Studio pages accessibility.
+    """
+
+    def test_lib_edit_page_a11y(self):
+        """
+        Check accessibility of LibraryEditPage.
+        """
+        lib_page = LibraryEditPage(self.browser, self.library_key)
+        lib_page.visit()
+        lib_page.wait_until_ready()
+
+        # There are several existing color contrast errors on this page,
+        # we will ignore this error in the test until we fix them.
+        lib_page.a11y_audit.config.set_rules({
+            "ignore": ['color-contrast'],
+        })
+
+        lib_page.a11y_audit.check_for_accessibility_errors()
