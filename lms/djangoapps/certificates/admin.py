@@ -30,6 +30,7 @@ class CertificateTemplateForm(forms.ModelForm):
 
     class Meta(object):
         model = CertificateTemplate
+        fields = '__all__'
 
 
 class CertificateTemplateAdmin(admin.ModelAdmin):
@@ -51,6 +52,7 @@ class GeneratedCertificateAdmin(admin.ModelAdmin):
     """
     Django admin customizations for GeneratedCertificate model
     """
+    raw_id_fields = ('user',)
     search_fields = ('course_id', 'user__username')
     list_display = ('id', 'course_id', 'mode', 'user')
 

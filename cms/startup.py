@@ -10,7 +10,8 @@ from django.conf import settings
 settings.INSTALLED_APPS  # pylint: disable=pointless-statement
 
 from openedx.core.lib.django_startup import autostartup
-from monkey_patch import django_utils_translation
+import django
+from monkey_patch import third_party_auth
 
 import xmodule.x_module
 import cms.lib.xblock.runtime
@@ -20,7 +21,9 @@ def run():
     """
     Executed during django startup
     """
-    django_utils_translation.patch()
+    third_party_auth.patch()
+
+    django.setup()
 
     autostartup()
 
