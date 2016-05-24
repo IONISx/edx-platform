@@ -1,3 +1,9 @@
+edx-platform |circleci|
+=======================
+
+.. |circleci| image:: https://circleci.com/gh/IONISx/edx-platform.svg?style=svg
+              :target: https://circleci.com/gh/IONISx/edx-platform
+
 This is the main edX platform which consists of LMS and Studio.
 
 
